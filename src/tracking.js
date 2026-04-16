@@ -1,12 +1,12 @@
-// v3 - 17TRACK integration via Vercel proxy
-// Full prefix map built from your complete shipping history
+// v4 - 17TRACK integration — fully automatic, no manual steps needed
+// Server handles all carrier resolution server-side
 
 export const CARRIER_PREFIXES = {
   // CMA CGM / CNC Line
-  'CMAU': { code: '190', name: 'CMA CGM' },
-  'CMDU': { code: '190', name: 'CMA CGM' },
-  'CGMU': { code: '190', name: 'CMA CGM' },
-  'CNCU': { code: '190', name: 'CNC Line' },
+  'CMAU': { code: '190',    name: 'CMA CGM' },
+  'CMDU': { code: '190',    name: 'CMA CGM' },
+  'CGMU': { code: '190',    name: 'CMA CGM' },
+  'CNCU': { code: '190',    name: 'CNC Line' },
   // Maersk
   'MAEU': { code: '100003', name: 'Maersk' },
   'MSKU': { code: '100003', name: 'Maersk' },
@@ -50,8 +50,8 @@ export const CARRIER_PREFIXES = {
   'PILU': { code: '100145', name: 'PIL' },
   'PCIU': { code: '100145', name: 'PIL' },
   // GYC = Loadstar Shipping forwarder
-  'GYC': { code: '3011', name: 'Loadstar Shipping' },
-  // Leased containers — auto-detect
+  'GYC':  { code: '3011',   name: 'Loadstar Shipping' },
+  // Leased containers — auto-detect (carrier varies by shipment)
   'TCNU': { code: '0', name: 'Triton Container' },
   'TCLU': { code: '0', name: 'Triton Container' },
   'DRYU': { code: '0', name: 'Dry Container' },
@@ -104,17 +104,15 @@ export const TRACKING_STATUSES = {
 }
 
 // Detect carrier from tracking number prefix
-// Always re-detects from the number itself — never trusts stored carrier_slug
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
-  // Check GYC first (3-char prefix)
   if (upper.startsWith('GYC')) return CARRIER_PREFIXES['GYC']
-  // Check 4-char prefix
   const prefix = upper.slice(0, 4)
   return CARRIER_PREFIXES[prefix] || null
 }
 
+// Single proxy call — server handles carrier resolution internally
 async function callProxy(action, trackingNumber, carrierCode) {
   try {
     const res = await fetch('/api/track', {
@@ -122,6 +120,10 @@ async function callProxy(action, trackingNumber, carrierCode) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, trackingNumber, carrierCode: carrierCode || '0' })
     })
+    if (res.status === 429) {
+      console.warn('17TRACK rate limit hit')
+      return null
+    }
     return await res.json()
   } catch (e) {
     console.error('Proxy error:', e)
@@ -129,52 +131,32 @@ async function callProxy(action, trackingNumber, carrierCode) {
   }
 }
 
+// Register — server will try with specific carrier first
 export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
-  // Always detect from the number, never use stored slug
   const detected = detectCarrier(trackingNumber)
-  const carrierCode = (detected?.code && detected.code !== '0') ? detected.code : '0'
-  console.log('Registering', trackingNumber, 'with carrier', carrierCode, detected?.name)
-  return await callProxy('register', trackingNumber, carrierCode)
+  const code = (detected?.code && detected.code !== '0') ? detected.code : '0'
+  return await callProxy('register', trackingNumber, code)
 }
 
+// Get tracking — server tries specific carrier then auto-detect, returns best result
 export async function getTracking(trackingNumber) {
   if (!trackingNumber) return null
-
-  // ALWAYS detect carrier fresh from the tracking number
-  // Never use po.carrier_slug — it may be stale from before the fix
   const detected = detectCarrier(trackingNumber)
-  const carrierCode = (detected?.code && detected.code !== '0') ? detected.code : '0'
+  const code = (detected?.code && detected.code !== '0') ? detected.code : '0'
 
-  console.log('Getting tracking for', trackingNumber, '→ carrier', carrierCode, detected?.name || 'auto-detect')
+  const data = await callProxy('gettrackinfo', trackingNumber, code)
+  if (!data || data.code !== 0) return null
 
-  // Call with detected carrier
-  const data = await callProxy('gettrackinfo', trackingNumber, carrierCode)
+  const accepted = data.data?.accepted || []
+  if (!accepted.length) return null
 
-  if (data?.code === 0) {
-    const accepted = data.data?.accepted || []
-    if (accepted.length) {
-      const result = parseAccepted(accepted)
-      if (result && result.statusCode !== 'NotFound') return result
-      // Got NotFound with specific carrier — try auto-detect as fallback
-      if (carrierCode !== '0') {
-        console.log('Retrying with auto-detect for', trackingNumber)
-        const data2 = await callProxy('gettrackinfo', trackingNumber, '0')
-        if (data2?.code === 0 && data2.data?.accepted?.length) {
-          return parseAccepted(data2.data.accepted) || result
-        }
-      }
-      return result
-    }
-  }
-
-  return null
+  return parseAccepted(accepted)
 }
 
 function parseAccepted(accepted) {
   if (!accepted?.length) return null
 
-  // Pick best entry — prefer one with real tracking data
   const best = accepted.find(a => {
     const s = a.track_info?.latest_status?.status
     return s && s !== 'NotFound'
