@@ -16,13 +16,14 @@ export const CARRIERS = [
 ]
 
 export const TRACKING_STATUSES = {
-  0:  { label: 'Not Found',     color: '#888',    bg: '#f5f5f5',  icon: '?' },
-  10: { label: 'In Transit',    color: '#0C447C', bg: '#E6F1FB',  icon: '🚢' },
-  20: { label: 'Exp. Delivery', color: '#633806', bg: '#FAEEDA',  icon: '📦' },
-  30: { label: 'Pickup Ready',  color: '#27500A', bg: '#EAF3DE',  icon: '✅' },
-  35: { label: 'Undelivered',   color: '#A32D2D', bg: '#FCEBEB',  icon: '⚠️' },
-  40: { label: 'Delivered',     color: '#27500A', bg: '#EAF3DE',  icon: '✅' },
-  50: { label: 'Exception',     color: '#A32D2D', bg: '#FCEBEB',  icon: '🚨' },
+  NotFound:         { label: 'Not Found',      color: '#888',    bg: '#f5f5f5', icon: '?' },
+  InfoReceived:     { label: 'Info Received',  color: '#633806', bg: '#FAEEDA', icon: '📋' },
+  InTransit:        { label: 'In Transit',     color: '#0C447C', bg: '#E6F1FB', icon: '🚢' },
+  OutForDelivery:   { label: 'Out for Delivery',color: '#27500A',bg: '#EAF3DE', icon: '🚚' },
+  FailedAttempt:    { label: 'Failed Attempt', color: '#A32D2D', bg: '#FCEBEB', icon: '⚠️' },
+  Delivered:        { label: 'Delivered',      color: '#27500A', bg: '#EAF3DE', icon: '✅' },
+  Exception:        { label: 'Exception',      color: '#A32D2D', bg: '#FCEBEB', icon: '🚨' },
+  Expired:          { label: 'Expired',        color: '#888',    bg: '#f5f5f5', icon: '⏱' },
 }
 
 export function detectCarrier(trackingNumber) {
@@ -36,12 +37,12 @@ export function detectCarrier(trackingNumber) {
   return null
 }
 
-async function callProxy(action, trackingNumber, carrierCode) {
+async function callProxy(action, trackingNumber) {
   try {
     const res = await fetch('/api/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, trackingNumber, carrierCode: carrierCode || '0' })
+      body: JSON.stringify({ action, trackingNumber })
     })
     return await res.json()
   } catch (e) {
@@ -50,68 +51,65 @@ async function callProxy(action, trackingNumber, carrierCode) {
   }
 }
 
-// Register — always auto-detect carrier, proxy handles this
 export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
-  const result = await callProxy('register', trackingNumber, '0')
-  if (result?.data?.rejected?.length > 0) {
-    console.warn('17TRACK registration issue:', result.data.rejected[0]?.error)
-  }
+  const result = await callProxy('register', trackingNumber)
+  // -18019901 just means already registered — that's fine
   return result
 }
 
-// Get live tracking info
-export async function getTracking(trackingNumber, carrierCode) {
+export async function getTracking(trackingNumber) {
   if (!trackingNumber) return null
 
-  // Always try without carrier first (auto-detect)
-  const data = await callProxy('gettrackinfo', trackingNumber, '0')
+  const data = await callProxy('gettrackinfo', trackingNumber)
   if (!data || data.code !== 0) return null
 
-  const accepted = data.data?.accepted?.[0]
-  const track = accepted?.track
+  const accepted = data.data?.accepted || []
+  if (!accepted.length) return null
 
-  // If not found with auto-detect and we have a carrier, try with carrier
-  if (!track && carrierCode && carrierCode !== '0') {
-    const data2 = await callProxy('gettrackinfo', trackingNumber, carrierCode)
-    if (!data2 || data2.code !== 0) return null
-    const accepted2 = data2.data?.accepted?.[0]
-    if (!accepted2?.track) return null
-    return parseTrackData(accepted2)
-  }
+  // Pick the best entry — the one with actual tracking data (not NotFound)
+  // 17TRACK may return multiple entries for different carrier interpretations
+  const best = accepted.find(a => {
+    const status = a.track_info?.latest_status?.status
+    return status && status !== 'NotFound'
+  }) || accepted[accepted.length - 1] // fallback to last entry
 
-  if (!track) return null
-  return parseTrackData(accepted)
-}
+  const trackInfo = best?.track_info
+  if (!trackInfo) return null
 
-function parseTrackData(accepted) {
-  const track = accepted.track
-  const statusInfo = TRACKING_STATUSES[track.e] || TRACKING_STATUSES[0]
-  const events = track.z0 || []
+  const statusStr = trackInfo.latest_status?.status || 'NotFound'
+  const statusInfo = TRACKING_STATUSES[statusStr] || TRACKING_STATUSES.NotFound
 
-  // Carrier name from resolved carrier code
-  const resolvedCarrierCode = String(accepted.carrier || '')
-  const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCarrierCode)?.name
-    || track.c  // fallback to carrier name in track data
-    || null
+  // Latest event details
+  const latestEvent = trackInfo.latest_event
+  const milestones = trackInfo.milestone || []
+
+  // All tracking events — build from milestone + latest event
+  const events = milestones.length > 0
+    ? milestones.map(m => ({
+        time: m.time_utc || m.time_iso || '',
+        location: '',
+        message: m.key_stage || '',
+      }))
+    : latestEvent
+      ? [{ time: latestEvent.time_utc || latestEvent.time_iso || '', location: '', message: statusStr }]
+      : []
+
+  // Carrier name
+  const resolvedCarrierCode = String(best?.carrier || '')
+  const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCarrierCode)?.name || null
 
   return {
-    statusCode: track.e,
+    statusCode: statusStr,
     statusLabel: statusInfo.label,
     statusStyle: statusInfo,
     statusIcon: statusInfo.icon,
     resolvedCarrier,
-    lastEvent: events[0]?.z || '',
-    lastLocation: events[0]?.l || '',
-    lastTime: events[0]?.a || '',
-    eta: track.eta || null,
-    origin: track.ot || '',
-    destination: track.dt || '',
+    lastTime: latestEvent?.time_utc || latestEvent?.time_iso || '',
+    lastLocation: latestEvent?.location || '',
+    lastEvent: trackInfo.latest_status?.sub_status_descr || trackInfo.latest_status?.sub_status || '',
+    eta: trackInfo.time_metrics?.estimated_delivery_date || null,
     totalEvents: events.length,
-    events: events.slice(0, 8).map(e => ({
-      time: e.a,
-      location: e.l,
-      message: e.z,
-    }))
+    events,
   }
 }
