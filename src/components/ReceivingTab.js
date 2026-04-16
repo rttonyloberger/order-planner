@@ -101,7 +101,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   return (
     <div>
       {/* Header */}
-      <div style={{ background: 'linear-gradient(135deg,#5C2E00,#7B3F00)', borderRadius: 10, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ background: 'linear-gradient(135deg,#18a0cc,#22b6e1)', borderRadius: 10, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
           <p style={{ color: '#FFCC99', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
@@ -247,7 +247,10 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             {p.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
                             {p.ship_mode === 'LCL' && <>
                               <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>
-                              <input type="number" placeholder="# boxes" defaultValue={p.box_count || ''} onBlur={e => update(p, 'box_count', e.target.value ? +e.target.value : null)} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 65 }} />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                <input type="text" inputMode="numeric" placeholder="#" defaultValue={p.box_count || ''} onBlur={e => { const v = parseInt(e.target.value); update(p, 'box_count', !isNaN(v) ? v : null) }} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 40 }} />
+                                <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+                              </div>
                             </>}
                           </div>
                         </td>
