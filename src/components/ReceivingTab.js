@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking } from '../tracking'
+import PODocsCell from './PODocsCell'
 
 function safeStr(val) {
   if (val == null) return ''
@@ -132,7 +133,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','FCL/LCL','Days Away'].map(h => (
+                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','Docs','FCL/LCL','Days Away'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -228,6 +229,10 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                 ? <div><span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span><button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button></div>
                                 : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
+                        {/* Docs */}
+                        <td style={{ ...tdS, minWidth: 190, verticalAlign: 'top', padding: '8px' }}>
+                          <PODocsCell poId={p.id} />
+                        </td>
                         <td style={{ ...tdS, minWidth: 120 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
                             <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
@@ -246,7 +251,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                       {/* Expanded event history */}
                       {isExpanded && hasInfo && info.events?.length > 0 && (
                         <tr>
-                          <td colSpan={15} style={{ padding: '12px 20px', background: '#f8f8f6', borderBottom: '2px solid #ddd' }}>
+                          <td colSpan={16} style={{ padding: '12px 20px', background: '#f8f8f6', borderBottom: '2px solid #ddd' }}>
                             <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>
                               Shipment History — #{safeStr(p.id)} · {safeStr(p.tracking_number)}
                               {info.resolvedCarrier && <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>via {safeStr(info.resolvedCarrier)}</span>}
@@ -267,7 +272,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   )
                 })}
                 <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
-                  <td colSpan={14} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
+                  <td colSpan={15} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
                     {bbPos.length} open BB shipments{totalVal ? `   |   Total inbound value: ${fmtMoney(totalVal)}` : ''}
                   </td>
                   <td />
