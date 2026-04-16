@@ -101,7 +101,7 @@ export default function App() {
       )}
       {activeTab === 'Receiving' && (
         <ReceivingTab
-          pos={store.pos} upsertPO={store.upsertPO}
+          pos={store.pos} upsertPO={store.upsertPO} deletePO={store.deletePO}
           showModal={showModal} closeModal={closeModal}
         />
       )}
