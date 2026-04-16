@@ -1,47 +1,94 @@
-// v6 - 17TRACK integration + direct carrier links
-// Auto-detect carrier, pure 17TRACK for most carriers
-// CMA CGM/CNC: direct link to carrier website (they don't share with 17TRACK API)
+// v7 - Full carrier support
+// Strategy:
+//   - Known-direct carriers (CMA, CNC, HMM, SM Line): skip 17TRACK, show direct link button
+//   - Known-17TRACK carriers: use 17TRACK API
+//   - Leased containers (unknown carrier): try 17TRACK, show fallback links if NotFound
 
 export const CARRIER_PREFIXES = {
-  // CMA CGM / CNC Line — link direct, 17TRACK API unreliable for these
-  'CMAU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
-  'CMDU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
-  'CGMU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
-  'CNCU': { code: '190', name: 'CNC Line', directUrl: () => 'https://www.cnc-line.cn/ebusiness/tracking' },
+  // ── Direct-link carriers (17TRACK API unreliable) ──────────────────────
+  // CMA CGM
+  'CMAU': { code: '190', name: 'CMA CGM', direct: true,
+    url: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  'CMDU': { code: '190', name: 'CMA CGM', direct: true,
+    url: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  'CGMU': { code: '190', name: 'CMA CGM', direct: true,
+    url: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  // CNC Line
+  'CNCU': { code: '190', name: 'CNC Line', direct: true,
+    url: () => 'https://www.cnc-line.cn/ebusiness/tracking' },
+  'SELU': { code: '190', name: 'CNC Line', direct: true,
+    url: () => 'https://www.cnc-line.cn/ebusiness/tracking' },
+  // HMM / Hyundai
+  'HMMU': { code: '0', name: 'HMM (Hyundai)', direct: true,
+    url: (n) => `https://www.hmm21.com/e-service/general/trackNTrace/TrackNTrace.do?blnNo=${n}` },
+  // SM Line
+  'SMCU': { code: '0', name: 'SM Line', direct: true,
+    url: () => 'https://esvc.smlines.com/smline/CUP_HOM_3301.do?sessLocale=en' },
+
+  // ── 17TRACK carriers ───────────────────────────────────────────────────
   // Maersk
-  'MAEU': { code: '100003', name: 'Maersk' },
-  'MSKU': { code: '100003', name: 'Maersk' },
-  'MRKU': { code: '100003', name: 'Maersk' },
+  'MAEU': { code: '100003', name: 'Maersk',
+    url: (n) => `https://www.maersk.com/tracking/${n}` },
+  'MSKU': { code: '100003', name: 'Maersk',
+    url: (n) => `https://www.maersk.com/tracking/${n}` },
+  'MRKU': { code: '100003', name: 'Maersk',
+    url: (n) => `https://www.maersk.com/tracking/${n}` },
   // MSC
-  'MSCU': { code: '100002', name: 'MSC' },
-  'MEDU': { code: '100002', name: 'MSC' },
-  'MSDU': { code: '100002', name: 'MSC' },
-  'MSMU': { code: '100002', name: 'MSC' },
+  'MSCU': { code: '100002', name: 'MSC',
+    url: () => 'https://www.msc.com/en/track-a-shipment' },
+  'MEDU': { code: '100002', name: 'MSC',
+    url: () => 'https://www.msc.com/en/track-a-shipment' },
+  'MSDU': { code: '100002', name: 'MSC',
+    url: () => 'https://www.msccargo.cn/' },
+  'MSMU': { code: '100002', name: 'MSC',
+    url: () => 'https://www.msccargo.cn/' },
   // COSCO / OOCL
-  'COSU': { code: '100011', name: 'COSCO' },
-  'CBHU': { code: '100011', name: 'COSCO' },
-  'OOLU': { code: '100011', name: 'COSCO/OOCL' },
-  'OOCU': { code: '100011', name: 'COSCO/OOCL' },
-  'ECMU': { code: '100011', name: 'COSCO/OOCL' },
+  'COSU': { code: '100011', name: 'COSCO',
+    url: () => 'https://elines.coscoshipping.com/ebusiness/cargotracking' },
+  'CBHU': { code: '100011', name: 'COSCO',
+    url: () => 'https://elines.coscoshipping.com/ebusiness/cargotracking' },
+  'OOLU': { code: '100011', name: 'OOCL',
+    url: () => 'https://www.oocl.com/eng/ourservices/eservices/cargotracking/Pages/cargotracking.aspx' },
+  'OOCU': { code: '100011', name: 'OOCL',
+    url: () => 'https://www.oocl.com/eng/ourservices/eservices/cargotracking/Pages/cargotracking.aspx' },
+  'ECMU': { code: '100011', name: 'COSCO/OOCL',
+    url: () => 'https://elines.coscoshipping.com/ebusiness/cargotracking' },
   // Evergreen
   'EITU': { code: '100006', name: 'Evergreen' },
   'EGHU': { code: '100006', name: 'Evergreen' },
-  'SELU': { code: '100006', name: 'Evergreen' },
   'TCKU': { code: '100006', name: 'Evergreen' },
-  'TRHU': { code: '100006', name: 'Evergreen' },
-  'TGBU': { code: '100006', name: 'Evergreen' },
+  'TRHU': { code: '100006', name: 'Evergreen',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
+  'TGBU': { code: '100006', name: 'OOCL',
+    url: () => 'https://www.oocl.com/eng/ourservices/eservices/cargotracking/Pages/cargotracking.aspx' },
   // Hapag-Lloyd
-  'HLCU': { code: '100007', name: 'Hapag-Lloyd' },
-  'HLXU': { code: '100007', name: 'Hapag-Lloyd' },
-  'UETU': { code: '100007', name: 'Hapag-Lloyd' },
+  'HLCU': { code: '100007', name: 'Hapag-Lloyd',
+    url: (n) => `https://www.hapag-lloyd.com/en/online-business/track/track-by-container-solution.html?container=${n}` },
+  'HLXU': { code: '100007', name: 'Hapag-Lloyd',
+    url: (n) => `https://www.hapag-lloyd.com/en/online-business/track/track-by-container-solution.html?container=${n}` },
+  'UETU': { code: '100007', name: 'Hapag-Lloyd',
+    url: (n) => `https://www.hapag-lloyd.com/en/online-business/track/track-by-container-solution.html?container=${n}` },
+  'HAMU': { code: '100007', name: 'Hapag-Lloyd',
+    url: (n) => `https://www.hapag-lloyd.com/en/online-business/track/track-by-container-solution.html?container=${n}` },
+  'FANU': { code: '100007', name: 'Hapag-Lloyd',
+    url: (n) => `https://www.hapag-lloyd.com/en/online-business/track/track-by-container-solution.html?container=${n}` },
   // ONE Line
-  'ONEY': { code: '100009', name: 'ONE Line' },
-  'NYKU': { code: '100009', name: 'ONE Line' },
-  'MOLU': { code: '100009', name: 'ONE Line' },
+  'ONEY': { code: '100009', name: 'ONE Line',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
+  'NYKU': { code: '100009', name: 'ONE Line',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
+  'MOLU': { code: '100009', name: 'ONE Line',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
+  'BEAU': { code: '100009', name: 'ONE Line',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
+  'TCLU': { code: '100009', name: 'ONE Line',
+    url: () => 'https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking' },
   // Yang Ming
-  'YMLU': { code: '100010', name: 'Yang Ming' },
+  'YMLU': { code: '100010', name: 'Yang Ming',
+    url: () => 'https://www.yangming.com/e-service/Track_Trace/Track_Trace_cargo_tracking.aspx' },
   'YMJU': { code: '100010', name: 'Yang Ming' },
-  'YMMU': { code: '100010', name: 'Yang Ming' },
+  'YMMU': { code: '100010', name: 'Yang Ming',
+    url: () => 'https://www.yangming.com/e-service/Track_Trace/Track_Trace_cargo_tracking.aspx' },
   // ZIM
   'ZIMU': { code: '100012', name: 'ZIM' },
   'ZXJU': { code: '100012', name: 'ZIM' },
@@ -50,31 +97,32 @@ export const CARRIER_PREFIXES = {
   // PIL
   'PILU': { code: '100145', name: 'PIL' },
   'PCIU': { code: '100145', name: 'PIL' },
-  // GYC = Loadstar Shipping forwarder
-  'GYC':  { code: '3011',   name: 'Loadstar Shipping' },
-  // Leased containers — auto-detect
-  'TCNU': { code: '0', name: 'Triton Container' },
-  'TCLU': { code: '0', name: 'Triton Container' },
-  'DRYU': { code: '0', name: 'Dry Container' },
-  'BSIU': { code: '0', name: 'BSI Container' },
-  'FCIU': { code: '0', name: 'Florens Container' },
-  'FFAU': { code: '0', name: 'FAM Container' },
-  'CAAU': { code: '0', name: 'CAA Container' },
-  'KOCU': { code: '0', name: 'Koole Container' },
-  'HAMU': { code: '0', name: 'Hamburg Süd leased' },
-  'FANU': { code: '0', name: 'Leased Container' },
-  'BMOU': { code: '0', name: 'BM Container' },
-  'BEAU': { code: '0', name: 'Beacon Container' },
-  'SMCU': { code: '0', name: 'SMC Container' },
-  'TIIU': { code: '0', name: 'TII Container' },
-  'CRSU': { code: '0', name: 'CRS Container' },
-  'HHXU': { code: '0', name: 'HH Container' },
-  'EWLU': { code: '0', name: 'EWL Container' },
-  'CICU': { code: '0', name: 'CIC Container' },
-  'JPCU': { code: '0', name: 'JPC Container' },
-  'DFSU': { code: '0', name: 'DFS Container' },
-  'HMMU': { code: '0', name: 'HMM Container' },
-  'TTNU': { code: '0', name: 'TTN Container' },
+  // GYC = Loadstar
+  'GYC':  { code: '3011', name: 'Loadstar Shipping' },
+
+  // ── Leased containers — try 17TRACK, fallback links if needed ──────────
+  // Per your spreadsheet, these go on various carriers
+  'TCNU': { code: '0', name: 'Leased Container' },   // seen on HMM & CMA
+  'DRYU': { code: '0', name: 'Leased Container',
+    url: () => 'https://esvc.smlines.com/smline/CUP_HOM_3301.do?sessLocale=en' },
+  'BSIU': { code: '0', name: 'Leased Container' },
+  'FCIU': { code: '0', name: 'Leased Container',
+    url: () => 'https://elines.coscoshipping.com/ebusiness/cargotracking' },
+  'FFAU': { code: '0', name: 'Leased Container' },
+  'CAAU': { code: '0', name: 'Leased Container' },
+  'KOCU': { code: '0', name: 'Leased Container',
+    url: (n) => `https://www.hmm21.com/e-service/general/trackNTrace/TrackNTrace.do?blnNo=${n}` },
+  'BMOU': { code: '0', name: 'Leased Container',
+    url: (n) => `https://www.hmm21.com/e-service/general/trackNTrace/TrackNTrace.do?blnNo=${n}` },
+  'TIIU': { code: '0', name: 'Leased Container' },
+  'CRSU': { code: '0', name: 'Leased Container' },
+  'HHXU': { code: '0', name: 'Leased Container' },
+  'EWLU': { code: '0', name: 'Leased Container' },
+  'CICU': { code: '0', name: 'Leased Container' },
+  'JPCU': { code: '0', name: 'Leased Container' },
+  'DFSU': { code: '0', name: 'Leased Container' },
+  'HMMU2': { code: '0', name: 'Leased Container' }, // placeholder
+  'TTNU': { code: '0', name: 'Leased Container' },
 }
 
 export const CARRIERS = [
@@ -103,7 +151,6 @@ export const TRACKING_STATUSES = {
   Expired:        { label: 'Expired',         color: '#888',    bg: '#f5f5f5', icon: '⏱' },
 }
 
-// Detect carrier from tracking number prefix
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
@@ -113,17 +160,15 @@ export function detectCarrier(trackingNumber) {
   return null
 }
 
-// Returns true if this carrier uses direct link instead of 17TRACK
-export function isDirectLinkCarrier(trackingNumber) {
-  const carrier = detectCarrier(trackingNumber)
-  return !!(carrier?.directUrl)
+// Returns true if we skip 17TRACK entirely for this number
+export function isDirectOnly(trackingNumber) {
+  return detectCarrier(trackingNumber)?.direct === true
 }
 
-// Get the direct tracking URL for carriers that don't work with 17TRACK
-export function getDirectTrackingUrl(trackingNumber) {
-  const carrier = detectCarrier(trackingNumber)
-  if (!carrier?.directUrl) return null
-  return carrier.directUrl(trackingNumber)
+// Get the direct carrier URL (works for all carriers with a url property)
+export function getDirectUrl(trackingNumber) {
+  const c = detectCarrier(trackingNumber)
+  return c?.url ? c.url(trackingNumber) : null
 }
 
 async function callProxy(action, trackingNumber) {
@@ -133,10 +178,7 @@ async function callProxy(action, trackingNumber) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, trackingNumber })
     })
-    if (res.status === 429) {
-      console.warn('17TRACK rate limit hit')
-      return null
-    }
+    if (res.status === 429) { console.warn('17TRACK rate limit'); return null }
     return await res.json()
   } catch (e) {
     console.error('Proxy error:', e)
@@ -145,16 +187,12 @@ async function callProxy(action, trackingNumber) {
 }
 
 export async function registerTracking(trackingNumber) {
-  if (!trackingNumber) return
-  // Don't register CMA/CNC numbers with 17TRACK — they use direct links
-  if (isDirectLinkCarrier(trackingNumber)) return
+  if (!trackingNumber || isDirectOnly(trackingNumber)) return
   return await callProxy('register', trackingNumber)
 }
 
 export async function getTracking(trackingNumber) {
-  if (!trackingNumber) return null
-  // CMA/CNC use direct links — return special status
-  if (isDirectLinkCarrier(trackingNumber)) return null
+  if (!trackingNumber || isDirectOnly(trackingNumber)) return null
   const data = await callProxy('gettrackinfo', trackingNumber)
   if (!data || data.code !== 0) return null
   const accepted = data.data?.accepted || []
@@ -164,7 +202,6 @@ export async function getTracking(trackingNumber) {
 
 function parseAccepted(accepted) {
   if (!accepted?.length) return null
-
   const best = accepted.find(a => {
     const s = a.track_info?.latest_status?.status
     return s && s !== 'NotFound'
@@ -188,15 +225,13 @@ function parseAccepted(accepted) {
   }
   milestones.forEach(m => {
     const t = m.time_utc || m.time_iso || ''
-    if (!events.find(e => e.time === t)) {
+    if (!events.find(e => e.time === t))
       events.push({ time: t, location: '', message: m.key_stage || '' })
-    }
   })
 
   const resolvedCode = String(best?.carrier || '')
   const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCode)?.name
-    || Object.values(CARRIER_PREFIXES).find(c => c.code === resolvedCode)?.name
-    || null
+    || Object.values(CARRIER_PREFIXES).find(c => c.code === resolvedCode)?.name || null
 
   return {
     statusCode: statusStr,
