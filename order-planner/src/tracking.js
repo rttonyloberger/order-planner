@@ -1,9 +1,7 @@
 // 17TRACK integration via Vercel proxy
 
 export const CARRIERS = [
-  // Auto-detect first
   { code: '0',      name: 'Auto-detect',             prefixes: [] },
-  // Ocean freight
   { code: '190',    name: 'CMA CGM / CNC Line',       prefixes: ['CMAU','CMDU','CGMU','CNCU'] },
   { code: '100003', name: 'Maersk',                   prefixes: ['MAEU','MSKU','MRKU'] },
   { code: '100002', name: 'MSC',                      prefixes: ['MSCU','MEDU'] },
@@ -14,10 +12,7 @@ export const CARRIERS = [
   { code: '100010', name: 'Yang Ming',                prefixes: ['YMLU','YMJU'] },
   { code: '100012', name: 'ZIM',                      prefixes: ['ZIMU'] },
   { code: '100013', name: 'Wan Hai',                  prefixes: ['WHLU'] },
-  // Freight forwarders / LCL
-  { code: '3011',   name: '17TRACK (LCL/Forwarder)',  prefixes: ['GYC','LCL'] },
-  { code: '100217', name: 'SITC',                     prefixes: ['SITC'] },
-  { code: '100145', name: 'PIL (Pacific Intl Lines)', prefixes: ['PILU'] },
+  { code: '3011',   name: 'Loadstar / Forwarder',     prefixes: ['GYC'] },
 ]
 
 export const TRACKING_STATUSES = {
@@ -30,12 +25,11 @@ export const TRACKING_STATUSES = {
   50: { label: 'Exception',     color: '#A32D2D', bg: '#FCEBEB',  icon: '🚨' },
 }
 
-// Auto-detect carrier from tracking number prefix
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
   for (const carrier of CARRIERS) {
-    if (carrier.prefixes.some(prefix => upper.startsWith(prefix))) {
+    if (carrier.prefixes?.some(prefix => upper.startsWith(prefix))) {
       return carrier
     }
   }
@@ -56,30 +50,50 @@ async function callProxy(action, trackingNumber, carrierCode) {
   }
 }
 
-export async function registerTracking(trackingNumber, carrierCode) {
+// Register — always auto-detect carrier, proxy handles this
+export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
-  const result = await callProxy('register', trackingNumber, carrierCode)
-  // After registering, wait 3 seconds and try to get info
-  // (17TRACK needs a moment to fetch from carrier)
+  const result = await callProxy('register', trackingNumber, '0')
+  if (result?.data?.rejected?.length > 0) {
+    console.warn('17TRACK registration issue:', result.data.rejected[0]?.error)
+  }
   return result
 }
 
+// Get live tracking info
 export async function getTracking(trackingNumber, carrierCode) {
   if (!trackingNumber) return null
-  const data = await callProxy('gettrackinfo', trackingNumber, carrierCode)
+
+  // Always try without carrier first (auto-detect)
+  const data = await callProxy('gettrackinfo', trackingNumber, '0')
   if (!data || data.code !== 0) return null
 
   const accepted = data.data?.accepted?.[0]
   const track = accepted?.track
+
+  // If not found with auto-detect and we have a carrier, try with carrier
+  if (!track && carrierCode && carrierCode !== '0') {
+    const data2 = await callProxy('gettrackinfo', trackingNumber, carrierCode)
+    if (!data2 || data2.code !== 0) return null
+    const accepted2 = data2.data?.accepted?.[0]
+    if (!accepted2?.track) return null
+    return parseTrackData(accepted2)
+  }
+
   if (!track) return null
+  return parseTrackData(accepted)
+}
 
+function parseTrackData(accepted) {
+  const track = accepted.track
   const statusInfo = TRACKING_STATUSES[track.e] || TRACKING_STATUSES[0]
-  const events = (track.z0 || [])
+  const events = track.z0 || []
 
-  // Detect the carrier 17TRACK used (it may have auto-resolved it)
-  const resolvedCarrier = accepted?.carrier
-    ? CARRIERS.find(c => c.code === String(accepted.carrier))?.name || `Carrier ${accepted.carrier}`
-    : null
+  // Carrier name from resolved carrier code
+  const resolvedCarrierCode = String(accepted.carrier || '')
+  const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCarrierCode)?.name
+    || track.c  // fallback to carrier name in track data
+    || null
 
   return {
     statusCode: track.e,
