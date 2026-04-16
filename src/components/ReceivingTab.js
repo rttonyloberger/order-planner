@@ -103,9 +103,9 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       {/* Header */}
       <div style={{ background: 'linear-gradient(135deg,#18a0cc,#22b6e1)', borderRadius: 10, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
-          <p style={{ color: '#FFCC99', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
-          {lastRefresh && <p style={{ color: 'rgba(255,204,153,.6)', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
+          <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
+          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
+          {lastRefresh && <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
@@ -115,12 +115,12 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
             { num: arriving30, lbl: 'Arriving ≤30d' },
             { num: overdue, lbl: 'Overdue' },
           ].map(s => (
-            <div key={s.lbl} style={{ background: s.lbl === 'Delivered' ? 'rgba(99,153,34,.3)' : 'rgba(255,255,255,.15)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
-              <div style={{ color: '#fff', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{s.num}</div>
-              <div style={{ color: '#FFCC99', fontSize: 10, marginTop: 3 }}>{s.lbl}</div>
+            <div key={s.lbl} style={{ background: s.lbl === 'Delivered' ? 'rgba(39,80,10,.2)' : 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
+              <div style={{ color: '#000', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{s.num}</div>
+              <div style={{ color: '#000', fontSize: 10, marginTop: 3 }}>{s.lbl}</div>
             </div>
           ))}
-          <button onClick={handleRefreshAll} disabled={refreshing} style={{ padding: '8px 14px', background: 'rgba(255,255,255,.2)', color: '#fff', border: '1px solid rgba(255,255,255,.3)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
+          <button onClick={handleRefreshAll} disabled={refreshing} style={{ padding: '8px 14px', background: 'rgba(255,255,255,.35)', color: '#000', border: '1px solid rgba(0,0,0,.2)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
             {refreshing ? 'Refreshing…' : '↻ Refresh Tracking'}
           </button>
         </div>
