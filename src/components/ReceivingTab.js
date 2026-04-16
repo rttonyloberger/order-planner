@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
-import { CARRIERS, detectCarrier, registerTracking, getTracking } from '../tracking'
+import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
 
 function safeStr(val) {
@@ -226,7 +226,13 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   )}
                                 </div>
                               : p.tracking_number
-                                ? <div><span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span><button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button></div>
+                                ? (isDirectOnly(p.tracking_number)
+                                    ? <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600, display: 'inline-block' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>
+                                    : <div>
+                                        <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
+                                        <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
+                                        {getDirectUrl(p.tracking_number) && <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 9, color: '#0C447C', marginTop: 3, textDecoration: 'underline' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>}
+                                      </div>)
                                 : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
                         {/* Docs */}
