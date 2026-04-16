@@ -15,9 +15,10 @@ export default async function handler(req, res) {
   const { action, trackingNumber, carrierCode } = req.body
   if (!trackingNumber) return res.status(400).json({ error: 'No tracking number' })
 
-  // Build payload — if no carrier code, omit it so 17TRACK auto-detects
+  // Always omit carrier for registration — let 17TRACK auto-detect
+  // Only include carrier for gettrackinfo if explicitly set to a known carrier
   const payload = [{ number: trackingNumber }]
-  if (carrierCode && carrierCode !== '0' && carrierCode !== '') {
+  if (action === 'gettrackinfo' && carrierCode && carrierCode !== '0' && carrierCode !== '') {
     payload[0].carrier = parseInt(carrierCode)
   }
 
