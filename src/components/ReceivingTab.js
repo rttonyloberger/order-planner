@@ -2,6 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking } from '../tracking'
 
+// Safe string helper — converts anything to a displayable string
+function safeStr(val) {
+  if (val == null) return ''
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return String(val)
+  if (typeof val === 'object') return JSON.stringify(val)
+  return String(val)
+}
+
 export default function ReceivingTab({ pos, upsertPO }) {
   const [trackingInfo, setTrackingInfo] = useState({})
   const [loadingIds, setLoadingIds] = useState(new Set())
@@ -21,12 +30,16 @@ export default function ReceivingTab({ pos, upsertPO }) {
   const loadOne = useCallback(async (po) => {
     if (!po.tracking_number) return
     setLoadingIds(prev => new Set([...prev, po.id]))
-    const info = await getTracking(po.tracking_number)
-    setTrackingInfo(prev => ({ ...prev, [po.id]: info || { noData: true } }))
+    try {
+      const info = await getTracking(po.tracking_number)
+      setTrackingInfo(prev => ({ ...prev, [po.id]: info || { noData: true } }))
+    } catch (e) {
+      console.error('Tracking error for', po.id, e)
+      setTrackingInfo(prev => ({ ...prev, [po.id]: { noData: true } }))
+    }
     setLoadingIds(prev => { const n = new Set(prev); n.delete(po.id); return n })
   }, [])
 
-  // Only load on mount — don't auto-load on every render to preserve quota
   useEffect(() => {
     const withTracking = bbPos.filter(p => p.tracking_number)
     withTracking.forEach(po => {
@@ -50,14 +63,13 @@ export default function ReceivingTab({ pos, upsertPO }) {
     if (!trackingNumber) return
     const auto = detectCarrier(trackingNumber)
     await upsertPO({ ...po, tracking_number: trackingNumber, carrier_slug: auto?.code || '0' })
-    // Register first, then wait 3s and fetch
     await registerTracking(trackingNumber)
     setTimeout(() => loadOne({ ...po, tracking_number: trackingNumber }), 3000)
   }
 
   const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
   const overdue = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d < 0 }).length
-  const inTransit = Object.values(trackingInfo).filter(t => t?.statusCode === 10).length
+  const inTransit = Object.values(trackingInfo).filter(t => t?.statusCode === 'InTransit').length
   const totalVal = bbPos.reduce((s, p) => s + (p.po_value || 0), 0)
 
   return (
@@ -93,7 +105,7 @@ export default function ReceivingTab({ pos, upsertPO }) {
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier (detected)','Tracking #','Last Update','Current Location','Tracking Status','FCL/LCL','Days Away'].map(h => (
+                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','FCL/LCL','Days Away'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -108,69 +120,82 @@ export default function ReceivingTab({ pos, upsertPO }) {
                   const info = trackingInfo[p.id]
                   const isLoading = loadingIds.has(p.id)
                   const isExpanded = expandedId === p.id
+                  const hasInfo = info && !info.noData
 
                   return (
                     <React.Fragment key={p.id}>
                       <tr style={{ background: sc.bg + '18', borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>{p.supplier}</td>
-                        <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{p.id}</td>
-                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{p.entity}</span></td>
+                        {/* Supplier */}
+                        <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>{safeStr(p.supplier)}</td>
+                        {/* PO # */}
+                        <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{safeStr(p.id)}</td>
+                        {/* Entity */}
+                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(p.entity)}</span></td>
+                        {/* Product */}
                         <td style={{ ...tdS, minWidth: 120 }}>
                           <select style={selS} value={p.product_type || ''} onChange={e => update(p, 'product_type', e.target.value)}>
                             <option value=''>--</option>
                             {opts.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </td>
-                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{p.status}</span></td>
+                        {/* PO Status */}
+                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{safeStr(p.status)}</span></td>
+                        {/* Order Date */}
                         <td style={{ ...tdS, fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</td>
+                        {/* ETA */}
                         <td style={tdS}>
                           <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
-                          {info?.eta && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>17TRACK: {info.eta}</div>}
+                          {hasInfo && info.eta && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>17T: {safeStr(info.eta)}</div>}
                         </td>
+                        {/* PO Value */}
                         <td style={{ ...tdS, fontSize: 11 }}>{fmtMoney(p.po_value)}</td>
-
-                        {/* Carrier — shows auto-detected name */}
-                        <td style={{ ...tdS, minWidth: 150, fontSize: 10 }}>
-                          {info?.resolvedCarrier
-                            ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600, fontSize: 10 }}>{info.resolvedCarrier}</span>
-                            : p.tracking_number
-                              ? <span style={{ color: '#aaa', fontSize: 10 }}>Detecting…</span>
-                              : <span style={{ color: '#ccc' }}>—</span>}
+                        {/* Carrier */}
+                        <td style={{ ...tdS, minWidth: 140, fontSize: 10 }}>
+                          {hasInfo && info.resolvedCarrier
+                            ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(info.resolvedCarrier)}</span>
+                            : (() => { const det = detectCarrier(p.tracking_number); return det ? <span style={{ background: '#f0f0f0', color: '#555', padding: '2px 7px', borderRadius: 8, fontSize: 10 }}>{safeStr(det.name)}</span> : <span style={{ color: '#ccc' }}>—</span> })()
+                          }
                         </td>
-
-                        {/* Tracking number input */}
+                        {/* Tracking # */}
                         <td style={{ ...tdS, minWidth: 170 }}>
-                          <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n={...prev}; delete n[p.id]; return n }) }} />
+                          <TrackingInput
+                            po={p}
+                            onSubmit={handleAddTracking}
+                            onRemove={() => {
+                              update(p, 'tracking_number', null)
+                              setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n })
+                            }}
+                          />
                         </td>
-
-                        {/* Last update timestamp */}
+                        {/* Last Update */}
                         <td style={{ ...tdS, minWidth: 120, fontSize: 10 }}>
                           {isLoading
                             ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
-                            : info?.lastTime
-                              ? <span style={{ color: '#444' }}>{info.lastTime}</span>
+                            : hasInfo && info.lastTime
+                              ? <span style={{ color: '#444' }}>{safeStr(info.lastTime)}</span>
                               : p.tracking_number
                                 ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
                                 : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-
-                        {/* Current location */}
+                        {/* Current Location */}
                         <td style={{ ...tdS, minWidth: 170, fontSize: 10 }}>
                           {isLoading
                             ? <span style={{ color: '#aaa' }}>…</span>
-                            : info?.lastLocation
-                              ? <div><div style={{ fontWeight: 500, color: '#333' }}>📍 {info.lastLocation}</div>{info.lastEvent && <div style={{ color: '#777', marginTop: 2, fontSize: 9 }}>{info.lastEvent}</div>}</div>
+                            : hasInfo && info.lastLocation
+                              ? <div>
+                                  <div style={{ fontWeight: 500, color: '#333' }}>📍 {safeStr(info.lastLocation)}</div>
+                                  {info.lastEvent && <div style={{ color: '#777', marginTop: 2, fontSize: 9 }}>{safeStr(info.lastEvent)}</div>}
+                                </div>
                               : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-
-                        {/* Tracking status */}
+                        {/* Tracking Status */}
                         <td style={{ ...tdS, minWidth: 140 }}>
                           {isLoading
                             ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>Fetching…</span>
-                            : info && !info.noData
+                            : hasInfo
                               ? <div>
                                   <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: info.statusStyle?.bg || '#f5f5f5', color: info.statusStyle?.color || '#888' }}>
-                                    {info.statusIcon} {info.statusLabel}
+                                    {safeStr(info.statusIcon)} {safeStr(info.statusLabel)}
                                   </span>
                                   {info.totalEvents > 0 && (
                                     <button onClick={() => setExpandedId(isExpanded ? null : p.id)} style={{ display: 'block', fontSize: 9, color: '#0C447C', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 3 }}>
@@ -179,10 +204,12 @@ export default function ReceivingTab({ pos, upsertPO }) {
                                   )}
                                 </div>
                               : p.tracking_number
-                                ? <div><span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span><button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button></div>
+                                ? <div>
+                                    <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
+                                    <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
+                                  </div>
                                 : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-
                         {/* FCL/LCL */}
                         <td style={{ ...tdS, minWidth: 120 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -196,24 +223,24 @@ export default function ReceivingTab({ pos, upsertPO }) {
                             </>}
                           </div>
                         </td>
-
+                        {/* Days Away */}
                         <td style={{ ...tdS, fontWeight: 700, minWidth: 80, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>{dTxt}</td>
                       </tr>
 
-                      {/* Expandable event history */}
-                      {isExpanded && info?.events?.length > 0 && (
+                      {/* Expanded event history */}
+                      {isExpanded && hasInfo && info.events?.length > 0 && (
                         <tr>
                           <td colSpan={15} style={{ padding: '12px 20px', background: '#f8f8f6', borderBottom: '2px solid #ddd' }}>
                             <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>
-                              Shipment History — #{p.id} · {p.tracking_number}
-                              {info.resolvedCarrier && <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>via {info.resolvedCarrier}</span>}
+                              Shipment History — #{safeStr(p.id)} · {safeStr(p.tracking_number)}
+                              {hasInfo && info.resolvedCarrier && <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>via {safeStr(info.resolvedCarrier)}</span>}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
                               {info.events.map((ev, i) => (
                                 <div key={i} style={{ background: i === 0 ? '#E6F1FB' : '#fff', border: '1px solid #e0e0e0', borderRadius: 6, padding: '8px 12px' }}>
-                                  <div style={{ fontSize: 10, fontWeight: 600, color: i === 0 ? '#0C447C' : '#333', marginBottom: 2 }}>{ev.time || '—'}</div>
-                                  {ev.location && <div style={{ fontSize: 10, color: '#555' }}>📍 {ev.location}</div>}
-                                  {ev.message && <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>{ev.message}</div>}
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: i === 0 ? '#0C447C' : '#333', marginBottom: 2 }}>{safeStr(ev.time) || '—'}</div>
+                                  {ev.location && <div style={{ fontSize: 10, color: '#555' }}>📍 {safeStr(ev.location)}</div>}
+                                  {ev.message && <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>{safeStr(ev.message)}</div>}
                                 </div>
                               ))}
                             </div>
