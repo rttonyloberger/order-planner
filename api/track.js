@@ -15,78 +15,49 @@ module.exports = async function handler(req, res) {
   const API_KEY = process.env.REACT_APP_17TRACK_API_KEY
   if (!API_KEY) return res.status(500).json({ error: 'No 17TRACK API key' })
 
-  const { action, trackingNumber, carrierCode } = req.body
+  const { action, trackingNumber } = req.body
   if (!trackingNumber) return res.status(400).json({ error: 'No tracking number' })
 
-  // For gettrackinfo, try multiple carrier codes and return best result
+  // ALWAYS use auto-detect (no carrier code) — let 17TRACK figure it out
+  // This matches what their website does and works reliably
+  const payload = [{ number: trackingNumber }]
+
   if (action === 'gettrackinfo') {
-    // Build list of carriers to try: specific carrier first, then auto-detect
-    const carriersToTry = []
-    if (carrierCode && carrierCode !== '0') carriersToTry.push(carrierCode)
-    carriersToTry.push('0') // always try auto-detect
-
-    for (const code of carriersToTry) {
-      const cacheKey = `${trackingNumber.toUpperCase()}-${code}`
-      const hit = cache[cacheKey]
-      if (hit && Date.now() - hit.time < CACHE_TTL) {
-        return res.status(200).json(hit.data)
-      }
-
-      const payload = [{ number: trackingNumber }]
-      if (code && code !== '0') payload[0].carrier = parseInt(code)
-
-      try {
-        const response = await fetch('https://api.17track.net/track/v2.2/gettrackinfo', {
-          method: 'POST',
-          headers: { '17token': API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-
-        if (response.status === 429) {
-          return res.status(429).json({ error: 'Rate limit reached' })
-        }
-
-        const data = await response.json()
-
-        if (data.code === 0) {
-          // Check if we got real tracking data
-          const hasRealData = data.data?.accepted?.some(a => {
-            const s = a.track_info?.latest_status?.status
-            return s && s !== 'NotFound'
-          })
-
-          if (hasRealData) {
-            // Cache it and return immediately
-            cache[cacheKey] = { data, time: Date.now() }
-            return res.status(200).json(data)
-          }
-        }
-      } catch (err) {
-        console.error('17TRACK error:', err.message)
-      }
+    const cacheKey = trackingNumber.toUpperCase()
+    const hit = cache[cacheKey]
+    if (hit && Date.now() - hit.time < CACHE_TTL) {
+      return res.status(200).json(hit.data)
     }
 
-    // Nothing worked — register and return empty (will populate on next check)
-    // Try to register with the specific carrier so 17TRACK fetches data in background
-    if (carrierCode && carrierCode !== '0') {
-      const regPayload = [{ number: trackingNumber, carrier: parseInt(carrierCode) }]
-      try {
-        await fetch('https://api.17track.net/track/v2.2/register', {
-          method: 'POST',
-          headers: { '17token': API_KEY, 'Content-Type': 'application/json' },
-          body: JSON.stringify(regPayload),
-        })
-      } catch (e) { /* ignore */ }
-    }
+    try {
+      const response = await fetch('https://api.17track.net/track/v2.2/gettrackinfo', {
+        method: 'POST',
+        headers: { '17token': API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
 
-    return res.status(200).json({ code: 0, data: { accepted: [], rejected: [] } })
+      if (response.status === 429) return res.status(429).json({ error: 'Rate limit reached' })
+
+      const data = await response.json()
+
+      if (data.code === 0) {
+        const hasRealData = data.data?.accepted?.some(a => {
+          const s = a.track_info?.latest_status?.status
+          return s && s !== 'NotFound'
+        })
+        // Only cache if we got real data
+        if (hasRealData) cache[cacheKey] = { data, time: Date.now() }
+        return res.status(200).json(data)
+      }
+
+      return res.status(200).json(data)
+    } catch (err) {
+      return res.status(500).json({ error: err.message })
+    }
   }
 
-  // Register action
   if (action === 'register') {
-    const payload = [{ number: trackingNumber }]
-    if (carrierCode && carrierCode !== '0') payload[0].carrier = parseInt(carrierCode)
-
+    // Register without carrier — pure auto-detect
     try {
       const response = await fetch('https://api.17track.net/track/v2.2/register', {
         method: 'POST',
