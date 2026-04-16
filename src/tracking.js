@@ -1,45 +1,58 @@
-// v5 - 17TRACK integration
-// Always uses auto-detect — no carrier codes sent to API
-// Carrier codes only used for display purposes (detecting name from prefix)
+// v6 - 17TRACK integration + direct carrier links
+// Auto-detect carrier, pure 17TRACK for most carriers
+// CMA CGM/CNC: direct link to carrier website (they don't share with 17TRACK API)
 
 export const CARRIER_PREFIXES = {
-  'CMAU': { code: '190',    name: 'CMA CGM' },
-  'CMDU': { code: '190',    name: 'CMA CGM' },
-  'CGMU': { code: '190',    name: 'CMA CGM' },
-  'CNCU': { code: '190',    name: 'CNC Line' },
+  // CMA CGM / CNC Line — link direct, 17TRACK API unreliable for these
+  'CMAU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  'CMDU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  'CGMU': { code: '190', name: 'CMA CGM', directUrl: (n) => `https://www.cma-cgm.com/ebusiness/tracking/search?SearchField=${n}` },
+  'CNCU': { code: '190', name: 'CNC Line', directUrl: () => 'https://www.cnc-line.cn/ebusiness/tracking' },
+  // Maersk
   'MAEU': { code: '100003', name: 'Maersk' },
   'MSKU': { code: '100003', name: 'Maersk' },
   'MRKU': { code: '100003', name: 'Maersk' },
+  // MSC
   'MSCU': { code: '100002', name: 'MSC' },
   'MEDU': { code: '100002', name: 'MSC' },
   'MSDU': { code: '100002', name: 'MSC' },
   'MSMU': { code: '100002', name: 'MSC' },
+  // COSCO / OOCL
   'COSU': { code: '100011', name: 'COSCO' },
   'CBHU': { code: '100011', name: 'COSCO' },
   'OOLU': { code: '100011', name: 'COSCO/OOCL' },
   'OOCU': { code: '100011', name: 'COSCO/OOCL' },
   'ECMU': { code: '100011', name: 'COSCO/OOCL' },
+  // Evergreen
   'EITU': { code: '100006', name: 'Evergreen' },
   'EGHU': { code: '100006', name: 'Evergreen' },
   'SELU': { code: '100006', name: 'Evergreen' },
   'TCKU': { code: '100006', name: 'Evergreen' },
   'TRHU': { code: '100006', name: 'Evergreen' },
   'TGBU': { code: '100006', name: 'Evergreen' },
+  // Hapag-Lloyd
   'HLCU': { code: '100007', name: 'Hapag-Lloyd' },
   'HLXU': { code: '100007', name: 'Hapag-Lloyd' },
   'UETU': { code: '100007', name: 'Hapag-Lloyd' },
+  // ONE Line
   'ONEY': { code: '100009', name: 'ONE Line' },
   'NYKU': { code: '100009', name: 'ONE Line' },
   'MOLU': { code: '100009', name: 'ONE Line' },
+  // Yang Ming
   'YMLU': { code: '100010', name: 'Yang Ming' },
   'YMJU': { code: '100010', name: 'Yang Ming' },
   'YMMU': { code: '100010', name: 'Yang Ming' },
+  // ZIM
   'ZIMU': { code: '100012', name: 'ZIM' },
   'ZXJU': { code: '100012', name: 'ZIM' },
+  // Wan Hai
   'WHLU': { code: '100013', name: 'Wan Hai' },
+  // PIL
   'PILU': { code: '100145', name: 'PIL' },
   'PCIU': { code: '100145', name: 'PIL' },
+  // GYC = Loadstar Shipping forwarder
   'GYC':  { code: '3011',   name: 'Loadstar Shipping' },
+  // Leased containers — auto-detect
   'TCNU': { code: '0', name: 'Triton Container' },
   'TCLU': { code: '0', name: 'Triton Container' },
   'DRYU': { code: '0', name: 'Dry Container' },
@@ -90,16 +103,29 @@ export const TRACKING_STATUSES = {
   Expired:        { label: 'Expired',         color: '#888',    bg: '#f5f5f5', icon: '⏱' },
 }
 
-// Detect carrier NAME from prefix — for display only, not sent to API
+// Detect carrier from tracking number prefix
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
-  if (upper.startsWith('GYC')) return CARRIER_PREFIXES['GYC']
+  if (upper.startsWith('GYC')) return { ...CARRIER_PREFIXES['GYC'], prefix: 'GYC' }
   const prefix = upper.slice(0, 4)
-  return CARRIER_PREFIXES[prefix] || null
+  if (CARRIER_PREFIXES[prefix]) return { ...CARRIER_PREFIXES[prefix], prefix }
+  return null
 }
 
-// Single proxy call — NO carrier code, pure auto-detect
+// Returns true if this carrier uses direct link instead of 17TRACK
+export function isDirectLinkCarrier(trackingNumber) {
+  const carrier = detectCarrier(trackingNumber)
+  return !!(carrier?.directUrl)
+}
+
+// Get the direct tracking URL for carriers that don't work with 17TRACK
+export function getDirectTrackingUrl(trackingNumber) {
+  const carrier = detectCarrier(trackingNumber)
+  if (!carrier?.directUrl) return null
+  return carrier.directUrl(trackingNumber)
+}
+
 async function callProxy(action, trackingNumber) {
   try {
     const res = await fetch('/api/track', {
@@ -108,7 +134,7 @@ async function callProxy(action, trackingNumber) {
       body: JSON.stringify({ action, trackingNumber })
     })
     if (res.status === 429) {
-      console.warn('17TRACK rate limit hit — try again later')
+      console.warn('17TRACK rate limit hit')
       return null
     }
     return await res.json()
@@ -118,15 +144,17 @@ async function callProxy(action, trackingNumber) {
   }
 }
 
-// Register — no carrier code, pure auto-detect
 export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
+  // Don't register CMA/CNC numbers with 17TRACK — they use direct links
+  if (isDirectLinkCarrier(trackingNumber)) return
   return await callProxy('register', trackingNumber)
 }
 
-// Get tracking — no carrier code, 17TRACK auto-detects
 export async function getTracking(trackingNumber) {
   if (!trackingNumber) return null
+  // CMA/CNC use direct links — return special status
+  if (isDirectLinkCarrier(trackingNumber)) return null
   const data = await callProxy('gettrackinfo', trackingNumber)
   if (!data || data.code !== 0) return null
   const accepted = data.data?.accepted || []
@@ -165,7 +193,6 @@ function parseAccepted(accepted) {
     }
   })
 
-  // Get carrier name from resolved code
   const resolvedCode = String(best?.carrier || '')
   const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCode)?.name
     || Object.values(CARRIER_PREFIXES).find(c => c.code === resolvedCode)?.name
