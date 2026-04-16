@@ -14,6 +14,22 @@ function safeStr(val) {
   return String(val)
 }
 
+
+// Format ISO date/datetime to simple American format: 4/11/2026
+function fmtTrackDate(val) {
+  if (!val) return ''
+  try {
+    const s = typeof val === 'string' ? val : JSON.stringify(val)
+    // Handle ISO strings like "2026-04-11T16:00:00Z" or "2026-04-11"
+    const match = s.match(/(\d{4})-(\d{2})-(\d{2})/)
+    if (!match) return s.replace(/T.*/,'')
+    const [, year, month, day] = match
+    return `${parseInt(month)}/${parseInt(day)}/${year}`
+  } catch(e) {
+    return ''
+  }
+}
+
 export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
   const [trackingInfo, setTrackingInfo] = useState({})
   const [loadingIds, setLoadingIds] = useState(new Set())
@@ -145,7 +161,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                           <td colSpan={15} style={{ background: '#EAF3DE', padding: '6px 16px', borderBottom: '1px solid #97C459' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span style={{ color: '#27500A', fontWeight: 600, fontSize: 12 }}>
-                                ✅ PO #{safeStr(p.id)} · {safeStr(p.supplier)} — Delivered{info.lastTime ? ` on ${safeStr(info.lastTime).split('T')[0]}` : ''}
+                                ✅ PO #{safeStr(p.id)} · {safeStr(p.supplier)} — Delivered{info.lastTime ? ` on ${fmtTrackDate(info.lastTime)}` : ''}
                               </span>
                               <button
                                 onClick={() => handleMarkComplete(p)}
@@ -172,7 +188,6 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         <td style={{ ...tdS, fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</td>
                         <td style={tdS}>
                           <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
-                          {hasInfo && info.eta && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>17T: {safeStr(info.eta)}</div>}
                         </td>
                         <td style={{ ...tdS, fontSize: 11 }}>{fmtMoney(p.po_value)}</td>
                         <td style={{ ...tdS, minWidth: 140, fontSize: 10 }}>
@@ -186,7 +201,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         </td>
                         <td style={{ ...tdS, minWidth: 120, fontSize: 10 }}>
                           {isLoading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
-                            : hasInfo && info.lastTime ? <span style={{ color: '#444' }}>{safeStr(info.lastTime)}</span>
+                            : hasInfo && info.lastTime ? <span style={{ color: '#444' }}>{fmtTrackDate(info.lastTime)}</span>
                             : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
                             : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
