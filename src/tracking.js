@@ -1,5 +1,4 @@
-// v2
-// 17TRACK integration via Vercel proxy
+// v3 - 17TRACK integration via Vercel proxy
 // Full prefix map built from your complete shipping history
 
 export const CARRIER_PREFIXES = {
@@ -51,8 +50,8 @@ export const CARRIER_PREFIXES = {
   'PILU': { code: '100145', name: 'PIL' },
   'PCIU': { code: '100145', name: 'PIL' },
   // GYC = Loadstar Shipping forwarder
-  'GYC0': { code: '3011',   name: 'Loadstar Shipping' },
-  // Leased containers — auto-detect (carrier varies)
+  'GYC': { code: '3011', name: 'Loadstar Shipping' },
+  // Leased containers — auto-detect
   'TCNU': { code: '0', name: 'Triton Container' },
   'TCLU': { code: '0', name: 'Triton Container' },
   'DRYU': { code: '0', name: 'Dry Container' },
@@ -77,7 +76,6 @@ export const CARRIER_PREFIXES = {
   'TTNU': { code: '0', name: 'TTN Container' },
 }
 
-// Carrier dropdown list for manual selection
 export const CARRIERS = [
   { code: '0',      name: 'Auto-detect' },
   { code: '190',    name: 'CMA CGM / CNC Line' },
@@ -105,16 +103,16 @@ export const TRACKING_STATUSES = {
   Expired:        { label: 'Expired',         color: '#888',    bg: '#f5f5f5', icon: '⏱' },
 }
 
-// Detect carrier from tracking number prefix (4-char or GYC special case)
+// Detect carrier from tracking number prefix
+// Always re-detects from the number itself — never trusts stored carrier_slug
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
-  // GYC is 3-char prefix
-  if (upper.startsWith('GYC')) return { ...CARRIER_PREFIXES['GYC0'], prefix: 'GYC' }
-  // Try 4-char prefix
-  const prefix4 = upper.slice(0, 4)
-  if (CARRIER_PREFIXES[prefix4]) return { ...CARRIER_PREFIXES[prefix4], prefix: prefix4 }
-  return null
+  // Check GYC first (3-char prefix)
+  if (upper.startsWith('GYC')) return CARRIER_PREFIXES['GYC']
+  // Check 4-char prefix
+  const prefix = upper.slice(0, 4)
+  return CARRIER_PREFIXES[prefix] || null
 }
 
 async function callProxy(action, trackingNumber, carrierCode) {
@@ -133,36 +131,41 @@ async function callProxy(action, trackingNumber, carrierCode) {
 
 export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
+  // Always detect from the number, never use stored slug
   const detected = detectCarrier(trackingNumber)
   const carrierCode = (detected?.code && detected.code !== '0') ? detected.code : '0'
+  console.log('Registering', trackingNumber, 'with carrier', carrierCode, detected?.name)
   return await callProxy('register', trackingNumber, carrierCode)
 }
 
 export async function getTracking(trackingNumber) {
   if (!trackingNumber) return null
 
+  // ALWAYS detect carrier fresh from the tracking number
+  // Never use po.carrier_slug — it may be stale from before the fix
   const detected = detectCarrier(trackingNumber)
   const carrierCode = (detected?.code && detected.code !== '0') ? detected.code : '0'
 
-  // Try with specific carrier first
+  console.log('Getting tracking for', trackingNumber, '→ carrier', carrierCode, detected?.name || 'auto-detect')
+
+  // Call with detected carrier
   const data = await callProxy('gettrackinfo', trackingNumber, carrierCode)
-  if (data?.code === 0 && data.data?.accepted?.length) {
-    const result = parseAccepted(data.data.accepted)
-    if (result && result.statusCode !== 'NotFound') return result
-  }
 
-  // If no result or NotFound, retry with auto-detect
-  if (carrierCode !== '0') {
-    const data2 = await callProxy('gettrackinfo', trackingNumber, '0')
-    if (data2?.code === 0 && data2.data?.accepted?.length) {
-      const result2 = parseAccepted(data2.data.accepted)
-      if (result2) return result2
+  if (data?.code === 0) {
+    const accepted = data.data?.accepted || []
+    if (accepted.length) {
+      const result = parseAccepted(accepted)
+      if (result && result.statusCode !== 'NotFound') return result
+      // Got NotFound with specific carrier — try auto-detect as fallback
+      if (carrierCode !== '0') {
+        console.log('Retrying with auto-detect for', trackingNumber)
+        const data2 = await callProxy('gettrackinfo', trackingNumber, '0')
+        if (data2?.code === 0 && data2.data?.accepted?.length) {
+          return parseAccepted(data2.data.accepted) || result
+        }
+      }
+      return result
     }
-  }
-
-  // Return whatever we got even if NotFound
-  if (data?.code === 0 && data.data?.accepted?.length) {
-    return parseAccepted(data.data.accepted)
   }
 
   return null
@@ -171,7 +174,7 @@ export async function getTracking(trackingNumber) {
 function parseAccepted(accepted) {
   if (!accepted?.length) return null
 
-  // Pick best entry — prefer one with real status over NotFound
+  // Pick best entry — prefer one with real tracking data
   const best = accepted.find(a => {
     const s = a.track_info?.latest_status?.status
     return s && s !== 'NotFound'
@@ -182,11 +185,9 @@ function parseAccepted(accepted) {
 
   const statusStr = trackInfo.latest_status?.status || 'NotFound'
   const statusInfo = TRACKING_STATUSES[statusStr] || TRACKING_STATUSES.NotFound
-
   const latestEvent = trackInfo.latest_event
   const milestones = trackInfo.milestone || []
 
-  // Build event list
   const events = []
   if (latestEvent) {
     events.push({
@@ -196,19 +197,15 @@ function parseAccepted(accepted) {
     })
   }
   milestones.forEach(m => {
-    if (!events.find(e => e.time === (m.time_utc || m.time_iso))) {
-      events.push({
-        time: m.time_utc || m.time_iso || '',
-        location: '',
-        message: m.key_stage || '',
-      })
+    const t = m.time_utc || m.time_iso || ''
+    if (!events.find(e => e.time === t)) {
+      events.push({ time: t, location: '', message: m.key_stage || '' })
     }
   })
 
-  // Resolve carrier name
   const resolvedCode = String(best?.carrier || '')
   const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCode)?.name
-    || detectCarrierByCode(resolvedCode)
+    || Object.values(CARRIER_PREFIXES).find(c => c.code === resolvedCode)?.name
     || null
 
   return {
@@ -224,9 +221,4 @@ function parseAccepted(accepted) {
     totalEvents: events.length,
     events: events.slice(0, 8),
   }
-}
-
-function detectCarrierByCode(code) {
-  const found = Object.values(CARRIER_PREFIXES).find(c => c.code === code)
-  return found?.name || null
 }
