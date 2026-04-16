@@ -1,57 +1,45 @@
-// v4 - 17TRACK integration — fully automatic, no manual steps needed
-// Server handles all carrier resolution server-side
+// v5 - 17TRACK integration
+// Always uses auto-detect — no carrier codes sent to API
+// Carrier codes only used for display purposes (detecting name from prefix)
 
 export const CARRIER_PREFIXES = {
-  // CMA CGM / CNC Line
   'CMAU': { code: '190',    name: 'CMA CGM' },
   'CMDU': { code: '190',    name: 'CMA CGM' },
   'CGMU': { code: '190',    name: 'CMA CGM' },
   'CNCU': { code: '190',    name: 'CNC Line' },
-  // Maersk
   'MAEU': { code: '100003', name: 'Maersk' },
   'MSKU': { code: '100003', name: 'Maersk' },
   'MRKU': { code: '100003', name: 'Maersk' },
-  // MSC
   'MSCU': { code: '100002', name: 'MSC' },
   'MEDU': { code: '100002', name: 'MSC' },
   'MSDU': { code: '100002', name: 'MSC' },
   'MSMU': { code: '100002', name: 'MSC' },
-  // COSCO / OOCL
   'COSU': { code: '100011', name: 'COSCO' },
   'CBHU': { code: '100011', name: 'COSCO' },
   'OOLU': { code: '100011', name: 'COSCO/OOCL' },
   'OOCU': { code: '100011', name: 'COSCO/OOCL' },
   'ECMU': { code: '100011', name: 'COSCO/OOCL' },
-  // Evergreen
   'EITU': { code: '100006', name: 'Evergreen' },
   'EGHU': { code: '100006', name: 'Evergreen' },
   'SELU': { code: '100006', name: 'Evergreen' },
   'TCKU': { code: '100006', name: 'Evergreen' },
   'TRHU': { code: '100006', name: 'Evergreen' },
   'TGBU': { code: '100006', name: 'Evergreen' },
-  // Hapag-Lloyd
   'HLCU': { code: '100007', name: 'Hapag-Lloyd' },
   'HLXU': { code: '100007', name: 'Hapag-Lloyd' },
   'UETU': { code: '100007', name: 'Hapag-Lloyd' },
-  // ONE Line
   'ONEY': { code: '100009', name: 'ONE Line' },
   'NYKU': { code: '100009', name: 'ONE Line' },
   'MOLU': { code: '100009', name: 'ONE Line' },
-  // Yang Ming
   'YMLU': { code: '100010', name: 'Yang Ming' },
   'YMJU': { code: '100010', name: 'Yang Ming' },
   'YMMU': { code: '100010', name: 'Yang Ming' },
-  // ZIM
   'ZIMU': { code: '100012', name: 'ZIM' },
   'ZXJU': { code: '100012', name: 'ZIM' },
-  // Wan Hai
   'WHLU': { code: '100013', name: 'Wan Hai' },
-  // PIL
   'PILU': { code: '100145', name: 'PIL' },
   'PCIU': { code: '100145', name: 'PIL' },
-  // GYC = Loadstar Shipping forwarder
   'GYC':  { code: '3011',   name: 'Loadstar Shipping' },
-  // Leased containers — auto-detect (carrier varies by shipment)
   'TCNU': { code: '0', name: 'Triton Container' },
   'TCLU': { code: '0', name: 'Triton Container' },
   'DRYU': { code: '0', name: 'Dry Container' },
@@ -77,7 +65,6 @@ export const CARRIER_PREFIXES = {
 }
 
 export const CARRIERS = [
-  { code: '0',      name: 'Auto-detect' },
   { code: '190',    name: 'CMA CGM / CNC Line' },
   { code: '100003', name: 'Maersk' },
   { code: '100002', name: 'MSC' },
@@ -89,7 +76,7 @@ export const CARRIERS = [
   { code: '100012', name: 'ZIM' },
   { code: '100013', name: 'Wan Hai' },
   { code: '100145', name: 'PIL' },
-  { code: '3011',   name: 'Loadstar / Forwarder (GYC)' },
+  { code: '3011',   name: 'Loadstar Shipping' },
 ]
 
 export const TRACKING_STATUSES = {
@@ -103,7 +90,7 @@ export const TRACKING_STATUSES = {
   Expired:        { label: 'Expired',         color: '#888',    bg: '#f5f5f5', icon: '⏱' },
 }
 
-// Detect carrier from tracking number prefix
+// Detect carrier NAME from prefix — for display only, not sent to API
 export function detectCarrier(trackingNumber) {
   if (!trackingNumber) return null
   const upper = trackingNumber.toUpperCase().trim()
@@ -112,16 +99,16 @@ export function detectCarrier(trackingNumber) {
   return CARRIER_PREFIXES[prefix] || null
 }
 
-// Single proxy call — server handles carrier resolution internally
-async function callProxy(action, trackingNumber, carrierCode) {
+// Single proxy call — NO carrier code, pure auto-detect
+async function callProxy(action, trackingNumber) {
   try {
     const res = await fetch('/api/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, trackingNumber, carrierCode: carrierCode || '0' })
+      body: JSON.stringify({ action, trackingNumber })
     })
     if (res.status === 429) {
-      console.warn('17TRACK rate limit hit')
+      console.warn('17TRACK rate limit hit — try again later')
       return null
     }
     return await res.json()
@@ -131,26 +118,19 @@ async function callProxy(action, trackingNumber, carrierCode) {
   }
 }
 
-// Register — server will try with specific carrier first
+// Register — no carrier code, pure auto-detect
 export async function registerTracking(trackingNumber) {
   if (!trackingNumber) return
-  const detected = detectCarrier(trackingNumber)
-  const code = (detected?.code && detected.code !== '0') ? detected.code : '0'
-  return await callProxy('register', trackingNumber, code)
+  return await callProxy('register', trackingNumber)
 }
 
-// Get tracking — server tries specific carrier then auto-detect, returns best result
+// Get tracking — no carrier code, 17TRACK auto-detects
 export async function getTracking(trackingNumber) {
   if (!trackingNumber) return null
-  const detected = detectCarrier(trackingNumber)
-  const code = (detected?.code && detected.code !== '0') ? detected.code : '0'
-
-  const data = await callProxy('gettrackinfo', trackingNumber, code)
+  const data = await callProxy('gettrackinfo', trackingNumber)
   if (!data || data.code !== 0) return null
-
   const accepted = data.data?.accepted || []
   if (!accepted.length) return null
-
   return parseAccepted(accepted)
 }
 
@@ -185,6 +165,7 @@ function parseAccepted(accepted) {
     }
   })
 
+  // Get carrier name from resolved code
   const resolvedCode = String(best?.carrier || '')
   const resolvedCarrier = CARRIERS.find(c => c.code === resolvedCode)?.name
     || Object.values(CARRIER_PREFIXES).find(c => c.code === resolvedCode)?.name
