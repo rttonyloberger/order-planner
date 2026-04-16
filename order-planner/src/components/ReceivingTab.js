@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, TRACKING_STATUSES, detectCarrier, registerTracking, getTracking } from '../tracking'
 
-export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
+export default function ReceivingTab({ pos, upsertPO }) {
   const [trackingInfo, setTrackingInfo] = useState({})
-  const [refreshing, setRefreshing] = useState(false)
+  const [loadingIds, setLoadingIds] = useState(new Set())
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [expandedId, setExpandedId] = useState(null)
 
   const bbPos = pos
     .filter(p => p.dest === 'BB' && p.status !== 'Complete')
@@ -16,41 +18,55 @@ export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
       return new Date(a.eta) - new Date(b.eta)
     })
 
-  useEffect(() => { loadAll() }, [bbPos.length])
+  // Load tracking for a single PO
+  const loadOne = useCallback(async (po) => {
+    if (!po.tracking_number) return
+    setLoadingIds(prev => new Set([...prev, po.id]))
+    const info = await getTracking(po.tracking_number, po.carrier_slug)
+    setTrackingInfo(prev => ({ ...prev, [po.id]: info || { statusCode: -1 } }))
+    setLoadingIds(prev => { const n = new Set(prev); n.delete(po.id); return n })
+  }, [])
 
-  const loadAll = async () => {
-    const withTracking = bbPos.filter(p => p.tracking_number)
-    for (const po of withTracking) {
-      const info = await getTracking(po.tracking_number, po.carrier_slug)
-      if (info) setTrackingInfo(prev => ({ ...prev, [po.id]: info }))
+  // Load all on mount
+  useEffect(() => {
+    bbPos.filter(p => p.tracking_number).forEach(loadOne)
+    setLastRefresh(new Date())
+  }, [])
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      bbPos.filter(p => p.tracking_number).forEach(loadOne)
+      setLastRefresh(new Date())
+    }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [bbPos.length, loadOne])
+
+  const handleRefreshAll = async () => {
+    setRefreshing(true)
+    for (const po of bbPos.filter(p => p.tracking_number)) {
+      await loadOne(po)
     }
     setLastRefresh(new Date())
-  }
-
-  const handleRefresh = async () => {
-    setRefreshing(true)
-    await loadAll()
     setRefreshing(false)
   }
 
   const update = (po, field, val) => upsertPO({ ...po, [field]: val || null })
 
-  const handleTrackingSubmit = async (po, trackingNumber, carrierCode) => {
-    const finalCarrier = carrierCode || '0'
+  const handleAddTracking = async (po, trackingNumber, carrierCode) => {
+    const auto = detectCarrier(trackingNumber)
+    const finalCarrier = carrierCode || auto?.code || '0'
     await upsertPO({ ...po, tracking_number: trackingNumber, carrier_slug: finalCarrier })
     await registerTracking(trackingNumber, finalCarrier)
-    const info = await getTracking(trackingNumber, finalCarrier)
-    if (info) {
-      setTrackingInfo(prev => ({ ...prev, [po.id]: info }))
-      if (info.eta && !po.eta) {
-        await upsertPO({ ...po, tracking_number: trackingNumber, carrier_slug: finalCarrier, eta: info.eta })
-      }
-    }
+    // Wait briefly then poll
+    setTimeout(async () => {
+      await loadOne({ ...po, tracking_number: trackingNumber, carrier_slug: finalCarrier })
+    }, 2000)
   }
 
   const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
   const overdue = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d < 0 }).length
-  const tracked = bbPos.filter(p => p.tracking_number).length
+  const inTransit = Object.values(trackingInfo).filter(t => t?.statusCode === 10).length
   const totalVal = bbPos.reduce((s, p) => s + (p.po_value || 0), 0)
 
   return (
@@ -60,17 +76,22 @@ export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
         <div>
           <h2 style={{ color: '#fff', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
           <p style={{ color: '#FFCC99', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
-          {lastRefresh && <p style={{ color: '#FFCC9977', fontSize: 10, margin: '3px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
+          {lastRefresh && <p style={{ color: 'rgba(255,204,153,.6)', fontSize: 10, margin: '4px 0 0' }}>Tracking last refreshed: {lastRefresh.toLocaleTimeString()} · Auto-refreshes every 5 min</p>}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          {[{ num: bbPos.length, lbl: 'Open POs' }, { num: arriving30, lbl: 'Arriving ≤30d' }, { num: overdue, lbl: 'Overdue' }, { num: tracked, lbl: 'Tracked' }].map(s => (
+          {[
+            { num: bbPos.length,  lbl: 'Open POs' },
+            { num: inTransit,     lbl: 'In Transit' },
+            { num: arriving30,    lbl: 'Arriving ≤30d' },
+            { num: overdue,       lbl: 'Overdue' },
+          ].map(s => (
             <div key={s.lbl} style={{ background: 'rgba(255,255,255,.15)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
               <div style={{ color: '#fff', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{s.num}</div>
               <div style={{ color: '#FFCC99', fontSize: 10, marginTop: 3 }}>{s.lbl}</div>
             </div>
           ))}
-          <button onClick={handleRefresh} disabled={refreshing} style={{ padding: '8px 14px', background: 'rgba(255,255,255,.2)', color: '#fff', border: '1px solid rgba(255,255,255,.3)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
-            {refreshing ? 'Refreshing…' : '↻ Refresh Tracking'}
+          <button onClick={handleRefreshAll} disabled={refreshing} style={{ padding: '8px 14px', background: 'rgba(255,255,255,.2)', color: '#fff', border: '1px solid rgba(255,255,255,.3)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
+            {refreshing ? 'Refreshing…' : '↻ Refresh All'}
           </button>
         </div>
       </div>
@@ -82,7 +103,7 @@ export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','Status','Order Date','ETA','PO Value','Carrier','Tracking #','Live Status','FCL / LCL','Days Away'].map(h => (
+                  {['Supplier','PO #','Entity','Product','Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','FCL/LCL','Days Away'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -94,73 +115,128 @@ export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
                   const ac = arrivalColor(days)
                   const dTxt = days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`
                   const opts = p.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
-                  const liveInfo = trackingInfo[p.id]
-                  const carrierName = CARRIERS.find(c => c.code === p.carrier_slug)?.name || ''
+                  const info = trackingInfo[p.id]
+                  const isLoading = loadingIds.has(p.id)
+                  const isExpanded = expandedId === p.id
 
                   return (
-                    <tr key={p.id} style={{ background: sc.bg + '18', borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>{p.supplier}</td>
-                      <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{p.id}</td>
-                      <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{p.entity}</span></td>
-                      <td style={{ ...tdS, minWidth: 120 }}>
-                        <select style={selS} value={p.product_type || ''} onChange={e => update(p, 'product_type', e.target.value)}>
-                          <option value=''>-- Select --</option>
-                          {opts.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{p.status}</span></td>
-                      <td style={{ ...tdS, fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</td>
-                      <td style={tdS}>
-                        <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110, cursor: 'pointer' }} />
-                        {liveInfo?.eta && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>17TRACK: {liveInfo.eta}</div>}
-                      </td>
-                      <td style={{ ...tdS, fontSize: 11 }}>{fmtMoney(p.po_value)}</td>
-
-                      {/* Carrier dropdown */}
-                      <td style={{ ...tdS, minWidth: 140 }}>
-                        <CarrierCell po={p} onUpdate={(carrierCode) => update(p, 'carrier_slug', carrierCode)} onSubmit={handleTrackingSubmit} />
-                      </td>
-
-                      {/* Tracking number */}
-                      <td style={{ ...tdS, minWidth: 160 }}>
-                        <TrackingNumberCell po={p} onSubmit={handleTrackingSubmit} onUpdate={update} />
-                      </td>
-
-                      {/* Live status */}
-                      <td style={{ ...tdS, minWidth: 150 }}>
-                        {liveInfo ? (
-                          <div>
-                            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: liveInfo.statusStyle.bg, color: liveInfo.statusStyle.color }}>{liveInfo.statusLabel}</span>
-                            {liveInfo.lastLocation && <div style={{ fontSize: 9, color: '#555', marginTop: 3 }}>📍 {liveInfo.lastLocation}</div>}
-                            {liveInfo.lastTime && <div style={{ fontSize: 9, color: '#888' }}>{liveInfo.lastTime}</div>}
-                          </div>
-                        ) : p.tracking_number ? (
-                          <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>
-                            {process.env.REACT_APP_17TRACK_API_KEY ? 'Fetching…' : 'API key needed'}
-                          </span>
-                        ) : <span style={{ color: '#ccc', fontSize: 11 }}>—</span>}
-                      </td>
-
-                      {/* FCL/LCL */}
-                      <td style={{ ...tdS, minWidth: 120 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                          <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
-                            <option value=''>--</option><option value='FCL'>FCL</option><option value='LCL'>LCL</option>
+                    <React.Fragment key={p.id}>
+                      <tr style={{ background: sc.bg + '18', borderBottom: '1px solid #f0f0f0' }}>
+                        {/* Supplier */}
+                        <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>{p.supplier}</td>
+                        {/* PO # */}
+                        <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{p.id}</td>
+                        {/* Entity */}
+                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{p.entity}</span></td>
+                        {/* Product */}
+                        <td style={{ ...tdS, minWidth: 120 }}>
+                          <select style={selS} value={p.product_type || ''} onChange={e => update(p, 'product_type', e.target.value)}>
+                            <option value=''>--</option>
+                            {opts.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
-                          {p.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
-                          {p.ship_mode === 'LCL' && <>
-                            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>
-                            <input type="number" placeholder="# boxes" defaultValue={p.box_count || ''} onBlur={e => update(p, 'box_count', e.target.value ? +e.target.value : null)} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 65 }} />
-                          </>}
-                        </div>
-                      </td>
+                        </td>
+                        {/* PO Status */}
+                        <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{p.status}</span></td>
+                        {/* Order Date */}
+                        <td style={{ ...tdS, fontSize: 11, color: '#666', whiteSpace: 'nowrap' }}>{fmtDate(p.order_date)}</td>
+                        {/* ETA */}
+                        <td style={tdS}>
+                          <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+                          {info?.eta && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>17TRACK: {info.eta}</div>}
+                        </td>
+                        {/* PO Value */}
+                        <td style={{ ...tdS, fontSize: 11, whiteSpace: 'nowrap' }}>{fmtMoney(p.po_value)}</td>
+                        {/* Carrier */}
+                        <td style={{ ...tdS, minWidth: 150 }}>
+                          <select style={selS} value={p.carrier_slug || ''} onChange={e => update(p, 'carrier_slug', e.target.value)}>
+                            <option value=''>Auto-detect</option>
+                            {CARRIERS.filter(c => c.code !== '0').map(c => <option key={c.code + c.name} value={c.code}>{c.name}</option>)}
+                          </select>
+                          {info?.resolvedCarrier && !p.carrier_slug && (
+                            <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>Detected: {info.resolvedCarrier}</div>
+                          )}
+                        </td>
+                        {/* Tracking # */}
+                        <td style={{ ...tdS, minWidth: 170 }}>
+                          <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => update(p, 'tracking_number', null)} />
+                        </td>
+                        {/* Last Update time */}
+                        <td style={{ ...tdS, minWidth: 110, fontSize: 10 }}>
+                          {isLoading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
+                            : info?.lastTime ? <span style={{ color: '#555' }}>{info.lastTime}</span>
+                            : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckBtnStyle}>Re-check</button>
+                            : <span style={{ color: '#ccc' }}>—</span>}
+                        </td>
+                        {/* Current Location */}
+                        <td style={{ ...tdS, minWidth: 160, fontSize: 10 }}>
+                          {isLoading ? <span style={{ color: '#888' }}>…</span>
+                            : info?.lastLocation ? (
+                              <div>
+                                <div style={{ color: '#333', fontWeight: 500 }}>📍 {info.lastLocation}</div>
+                                {info.lastEvent && <div style={{ color: '#888', fontSize: 9, marginTop: 2 }}>{info.lastEvent}</div>}
+                              </div>
+                            ) : <span style={{ color: '#ccc' }}>—</span>}
+                        </td>
+                        {/* Tracking Status */}
+                        <td style={{ ...tdS, minWidth: 130 }}>
+                          {isLoading ? <span style={{ color: '#888', fontSize: 10, fontStyle: 'italic' }}>Fetching…</span>
+                            : info?.statusCode != null && info.statusCode >= 0 ? (
+                              <div>
+                                <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: info.statusStyle?.bg || '#f5f5f5', color: info.statusStyle?.color || '#888' }}>
+                                  {info.statusIcon} {info.statusLabel}
+                                </span>
+                                {info.totalEvents > 0 && (
+                                  <button onClick={() => setExpandedId(isExpanded ? null : p.id)} style={{ display: 'block', fontSize: 9, color: '#0C447C', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 3 }}>
+                                    {isExpanded ? 'Hide history' : `${info.totalEvents} events`}
+                                  </button>
+                                )}
+                              </div>
+                            ) : p.tracking_number ? (
+                              <div>
+                                <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
+                                <button onClick={() => loadOne(p)} style={recheckBtnStyle}>Re-check</button>
+                              </div>
+                            ) : <span style={{ color: '#ccc', fontSize: 11 }}>—</span>}
+                        </td>
+                        {/* FCL/LCL */}
+                        <td style={{ ...tdS, minWidth: 120 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                            <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
+                              <option value=''>--</option><option value='FCL'>FCL</option><option value='LCL'>LCL</option>
+                            </select>
+                            {p.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+                            {p.ship_mode === 'LCL' && <>
+                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>
+                              <input type="number" placeholder="# boxes" defaultValue={p.box_count || ''} onBlur={e => update(p, 'box_count', e.target.value ? +e.target.value : null)} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 65 }} />
+                            </>}
+                          </div>
+                        </td>
+                        {/* Days Away */}
+                        <td style={{ ...tdS, fontWeight: 700, minWidth: 80, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>{dTxt}</td>
+                      </tr>
 
-                      <td style={{ ...tdS, fontWeight: 700, minWidth: 80, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>{dTxt}</td>
-                    </tr>
+                      {/* Expanded event history row */}
+                      {isExpanded && info?.events?.length > 0 && (
+                        <tr>
+                          <td colSpan={15} style={{ padding: '12px 20px', background: '#f8f8f6', borderBottom: '2px solid #ddd' }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>Shipment History — #{p.id} · {p.tracking_number}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                              {info.events.map((ev, i) => (
+                                <div key={i} style={{ background: i === 0 ? '#E6F1FB' : '#fff', border: '1px solid #e0e0e0', borderRadius: 6, padding: '8px 12px' }}>
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: i === 0 ? '#0C447C' : '#333', marginBottom: 2 }}>{ev.time || '—'}</div>
+                                  {ev.location && <div style={{ fontSize: 10, color: '#555' }}>📍 {ev.location}</div>}
+                                  {ev.message && <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>{ev.message}</div>}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   )
                 })}
                 <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
-                  <td colSpan={12} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
+                  <td colSpan={14} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
                     {bbPos.length} open BB shipments{totalVal ? `   |   Total inbound value: ${fmtMoney(totalVal)}` : ''}
                   </td>
                   <td />
@@ -173,33 +249,18 @@ export default function ReceivingTab({ pos, upsertPO, showModal, closeModal }) {
   )
 }
 
-function CarrierCell({ po, onUpdate, onSubmit }) {
-  return (
-    <select
-      style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 5, width: '100%', cursor: 'pointer' }}
-      value={po.carrier_slug || ''}
-      onChange={e => onUpdate(e.target.value)}
-    >
-      <option value=''>Select carrier…</option>
-      {CARRIERS.filter(c => c.code !== '0').map(c => <option key={c.code + c.name} value={c.code}>{c.name}</option>)}
-    </select>
-  )
-}
-
-function TrackingNumberCell({ po, onSubmit, onUpdate }) {
+function TrackingInput({ po, onSubmit, onRemove }) {
   const [val, setVal] = useState(po.tracking_number || '')
-  const [autoDetected, setAutoDetected] = useState(null)
+  const [detected, setDetected] = useState(null)
 
   const handleChange = (v) => {
     setVal(v)
-    const detected = detectCarrier(v)
-    setAutoDetected(detected || null)
+    setDetected(detectCarrier(v))
   }
 
   const handleBlur = () => {
     if (val && val !== po.tracking_number) {
-      const carrierCode = autoDetected?.code || po.carrier_slug || '0'
-      onSubmit(po, val, carrierCode)
+      onSubmit(po, val, detected?.code || po.carrier_slug || '0')
     }
   }
 
@@ -213,13 +274,13 @@ function TrackingNumberCell({ po, onSubmit, onUpdate }) {
         placeholder="Enter tracking #"
         style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
       />
-      {autoDetected && (
+      {detected && !po.tracking_number && (
         <div style={{ fontSize: 9, color: '#27500A', background: '#EAF3DE', padding: '2px 5px', borderRadius: 3, marginTop: 2 }}>
-          ✓ Auto-detected: {autoDetected.name}
+          ✓ Auto-detected: {detected.name}
         </div>
       )}
       {po.tracking_number && (
-        <button onClick={() => onUpdate(po, 'tracking_number', null)} style={{ fontSize: 9, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 2 }}>remove</button>
+        <button onClick={onRemove} style={{ fontSize: 9, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 2 }}>remove</button>
       )}
     </div>
   )
@@ -228,3 +289,4 @@ function TrackingNumberCell({ po, onSubmit, onUpdate }) {
 const thS = { background: '#f5f5f3', fontSize: 10, fontWeight: 500, color: '#666', padding: '7px 8px', textAlign: 'center', borderRight: '1px solid #eee', borderBottom: '2px solid #ddd', whiteSpace: 'nowrap', letterSpacing: '.04em', textTransform: 'uppercase' }
 const tdS = { padding: '7px 8px', borderRight: '1px solid #eee', fontSize: 12, textAlign: 'center', verticalAlign: 'middle' }
 const selS = { fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 5, background: '#fff', cursor: 'pointer', width: '100%' }
+const recheckBtnStyle = { display: 'block', fontSize: 9, color: '#0C447C', background: 'none', border: '1px solid #0C447C', borderRadius: 4, cursor: 'pointer', padding: '2px 6px', marginTop: 3 }
