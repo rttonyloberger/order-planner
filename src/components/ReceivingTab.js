@@ -133,7 +133,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','Docs','FCL/LCL','Days Away'].map(h => (
+                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','Docs','FCL/LCL','Est. Receive Date'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -151,7 +151,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   const opts = p.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
 
                   // Days away cell — show Delivered if delivered
-                  const dTxt = isDelivered ? 'Delivered' : days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`
+                  const dTxt = days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`
                   const dStyle = isDelivered ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' } : ac
 
                   return (
@@ -254,7 +254,18 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             </>}
                           </div>
                         </td>
-                        <td style={{ ...tdS, fontWeight: 700, minWidth: 80, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }}>{dTxt}</td>
+                        <td style={{ ...tdS, fontWeight: 700, minWidth: 100, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }}>
+                          {isDelivered ? 'Delivered' : (
+                            <div>
+                              <div style={{ fontWeight: 700 }}>{dTxt}</div>
+                              {hasInfo && info.eta && typeof info.eta === 'string' && info.eta.match(/\d{4}/) && (
+                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2, color: '#27500A' }}>
+                                  📅 {fmtTrackDate(info.eta)}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
                       </tr>
 
                       {/* Expanded event history */}
