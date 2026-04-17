@@ -119,6 +119,19 @@ function ContainerRow({ container, onUpdate, onDelete }) {
         )}
       </div>
 
+      {/* Per-container Dest — short warehouse code (e.g. FTW1, ONT8). */}
+      <div style={{ minWidth: 80 }}>
+        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Dest</div>
+        <input
+          type="text"
+          defaultValue={container.dest || ''}
+          placeholder="e.g. FTW1"
+          maxLength={8}
+          onBlur={e => onUpdate(container.id, { dest: e.target.value.trim().toUpperCase() || null })}
+          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace', textTransform: 'uppercase', textAlign: 'center' }}
+        />
+      </div>
+
       {/* Boxes per container */}
       <div style={{ minWidth: 70 }}>
         <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Boxes</div>
@@ -239,13 +252,10 @@ export function AWDPORow({ po, upsertPO }) {
 
   const update = (field, val) => upsertPO({ ...po, [field]: val || null })
 
-  // Destination badge color — dest is now a freeform 4-char code, so we
-  // pick a neutral pill for anything we don't explicitly recognize.
-  const d = (po.dest || '').toUpperCase()
-  const db = d.includes('AWD') ? { bg: '#E6F1FB', fc: '#0C447C' }
-           : d.includes('FBA') ? { bg: '#EEEDFE', fc: '#3C3489' }
-           : d ? { bg: '#F1EFE8', fc: '#444441' }
-           : { bg: '#fff', fc: '#aaa' }
+  // Destination badge color
+  const db = po.dest === 'AWD' || po.dest === 'RT AWD' ? { bg: '#E6F1FB', fc: '#0C447C' }
+           : po.dest === 'FBA' ? { bg: '#EEEDFE', fc: '#3C3489' }
+           : { bg: '#F1EFE8', fc: '#444441' }
 
   return (
     <>
@@ -259,18 +269,15 @@ export function AWDPORow({ po, upsertPO }) {
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: po.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: po.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(po.entity)}</span>
         </td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
-          {/* Dest is a freeform 4-char code (e.g. FTW1, ONT8, AWD, FBA). */}
-          <input
-            type="text"
-            defaultValue={po.dest || ''}
-            placeholder="e.g. FTW1"
-            maxLength={8}
-            onBlur={e => update('dest', e.target.value.trim().toUpperCase())}
-            style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 72, textAlign: 'center', fontFamily: 'monospace', textTransform: 'uppercase' }}
-          />
+          <select style={selS} value={po.dest || ''} onChange={e => update('dest', e.target.value)}>
+            <option value=''>--</option>
+            <option value='AWD'>AWD</option>
+            <option value='FBA'>FBA</option>
+            <option value='RT AWD'>RT AWD</option>
+          </select>
           {po.dest && (
             <div style={{ marginTop: 3 }}>
-              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10, fontWeight: 600, background: db.bg, color: db.fc, fontFamily: 'monospace' }}>{po.dest}</span>
+              <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10, fontWeight: 600, background: db.bg, color: db.fc }}>{po.dest}</span>
             </div>
           )}
         </td>
@@ -386,24 +393,24 @@ export function AWDPOTable({ pos, upsertPO, entityFilter }) {
 }
 
 export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
-  const [addRow, setAddRow] = useState({ supplier: '', id: '', status: 'Committed', dest: '', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
+  const [addRow, setAddRow] = useState({ supplier: '', id: '', status: 'Committed', dest: 'AWD', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
 
   const awdPos = pos
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
 
   const suppliers = ['Dongyang Shanye Fishing', 'I-Lure', 'Sourcepro', 'WEIGHT CO', 'JXL', 'Weihai Huayue Sports', 'XINGTAI XIOU IMPORT', 'CNBM INTERNATIONAL']
+  const destOpts = ['AWD', 'FBA', 'RT AWD']
 
   const submitAdd = () => {
     if (!addRow.supplier || !addRow.id) return
     upsertPO({
       id: addRow.id, supplier: addRow.supplier, status: addRow.status,
-      dest: (addRow.dest || '').trim().toUpperCase() || null,
-      entity: addRow.entity, table_id: addRow.entity === 'SG' ? 'sg-awdfba' : 'rt-awd',
+      dest: addRow.dest, entity: addRow.entity, table_id: addRow.entity === 'SG' ? 'sg-awdfba' : 'rt-awd',
       order_date: addRow.order_date || null, eta: addRow.eta || null,
       po_value: addRow.po_value ? +addRow.po_value : null,
       product_type: addRow.product_type || null
     })
-    setAddRow({ supplier: '', id: '', status: 'Committed', dest: '', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
+    setAddRow({ supplier: '', id: '', status: 'Committed', dest: 'AWD', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
   }
 
   return (
@@ -429,7 +436,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
           <select style={addSelS} value={addRow.supplier} onChange={e => setAddRow(r => ({...r, supplier: e.target.value}))}><option value=''>Supplier</option>{suppliers.map(s => <option key={s} value={s}>{s}</option>)}</select>
           <input style={addInpS} placeholder="PO #" value={addRow.id} onChange={e => setAddRow(r => ({...r, id: e.target.value}))} />
           <select style={addSelS} value={addRow.entity} onChange={e => setAddRow(r => ({...r, entity: e.target.value}))}><option value='RT'>RT</option><option value='SG'>SG</option></select>
-          <input style={{ ...addInpS, minWidth: 90, fontFamily: 'monospace', textTransform: 'uppercase' }} placeholder="Dest (e.g. FTW1)" maxLength={8} value={addRow.dest} onChange={e => setAddRow(r => ({...r, dest: e.target.value}))} />
+          <select style={addSelS} value={addRow.dest} onChange={e => setAddRow(r => ({...r, dest: e.target.value}))}>{destOpts.map(d => <option key={d} value={d}>{d}</option>)}</select>
           <input style={addInpS} placeholder="Product" value={addRow.product_type} onChange={e => setAddRow(r => ({...r, product_type: e.target.value}))} />
           <select style={addSelS} value={addRow.status} onChange={e => setAddRow(r => ({...r, status: e.target.value}))}><option>Draft</option><option>Committed</option></select>
           <input type="date" style={addInpS} value={addRow.order_date} onChange={e => setAddRow(r => ({...r, order_date: e.target.value}))} />
