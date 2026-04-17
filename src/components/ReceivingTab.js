@@ -16,6 +16,13 @@ function safeStr(val) {
 }
 
 
+// Pull a YYYY-MM-DD substring out of whatever 17TRACK gave us.
+function extractIsoDate(val) {
+  if (!val || typeof val !== 'string') return null
+  const m = val.match(/(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
+}
+
 // Format ISO date/datetime to simple American format: 4/11/2026
 function fmtTrackDate(val) {
   if (!val) return ''
@@ -53,12 +60,18 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     try {
       const info = await getTracking(po.tracking_number)
       setTrackingInfo(prev => ({ ...prev, [po.id]: info || { noData: true } }))
+      // Auto-overwrite p.eta whenever tracking returns a new eta — tracking
+      // is the source of truth, manual entry is just a starting placeholder.
+      if (info) {
+        const iso = extractIsoDate(info.eta)
+        if (iso && iso !== po.eta) upsertPO({ ...po, eta: iso })
+      }
     } catch (e) {
       console.error('Tracking error for', po.id, e)
       setTrackingInfo(prev => ({ ...prev, [po.id]: { noData: true } }))
     }
     setLoadingIds(prev => { const n = new Set(prev); n.delete(po.id); return n })
-  }, [])
+  }, [upsertPO])
 
   useEffect(() => {
     const withTracking = bbPos.filter(p => p.tracking_number)
@@ -80,7 +93,8 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     const auto = detectCarrier(trackingNumber)
     await upsertPO({ ...po, tracking_number: trackingNumber, carrier_slug: auto?.code || '0' })
     await registerTracking(trackingNumber)
-    setTimeout(() => loadOne({ ...po, tracking_number: trackingNumber }), 3000)
+    // loadOne will now auto-sync p.eta once tracking returns a date.
+    setTimeout(() => loadOne({ ...po, tracking_number: trackingNumber, carrier_slug: auto?.code || '0' }), 3000)
   }
 
   const handleMarkComplete = (po) => {
@@ -188,7 +202,8 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{safeStr(p.status)}</span></td>
                         <td style={{ ...tdS, fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</td>
                         <td style={tdS}>
-                          <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+                          <input key={p.eta || 'none'} type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+                          {hasInfo && extractIsoDate(info.eta) && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>📡 from tracking</div>}
                         </td>
                         <td style={{ ...tdS, fontSize: 11 }}>{fmtMoney(p.po_value)}</td>
                         <td style={{ ...tdS, minWidth: 140, fontSize: 10 }}>
@@ -263,11 +278,8 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `in ${days}d`}
                                 </div>
                               )}
-                              {hasInfo && info.eta && typeof info.eta === 'string' && info.eta.includes('-') && (
-                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2, color: '#27500A' }}>
-                                  📅 {fmtTrackDate(info.eta)}
-                                </div>
-                              )}
+                              {/* Tracking eta now auto-writes into p.eta, so the
+                                  main date above already reflects it. */}
                             </div>
                           )}
                         </td>

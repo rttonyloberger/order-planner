@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, TRACKING_STATUSES, detectCarrier, registerTracking, getTracking } from '../tracking'
 
+// Pull a YYYY-MM-DD substring out of whatever 17TRACK gave us.
+function extractIsoDate(val) {
+  if (!val || typeof val !== 'string') return null
+  const m = val.match(/(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
+}
+
 export default function POTable({ tableId, pos, isSG, showShip, upsertPO, deletePO, showModal, closeModal }) {
   const [trackingInfo, setTrackingInfo] = useState({})
   const [loadingTracking, setLoadingTracking] = useState({})
@@ -21,7 +28,12 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
       if (p.tracking_number && !trackingInfo[p.id] && !loadingTracking[p.id]) {
         setLoadingTracking(prev => ({ ...prev, [p.id]: true }))
         const info = await getTracking(p.tracking_number, p.carrier_slug)
-        if (info) setTrackingInfo(prev => ({ ...prev, [p.id]: info }))
+        if (info) {
+          setTrackingInfo(prev => ({ ...prev, [p.id]: info }))
+          // Overwrite PO's eta whenever tracking returns a different date.
+          const iso = extractIsoDate(info.eta)
+          if (iso && iso !== p.eta) upsertPO({ ...p, eta: iso })
+        }
         setLoadingTracking(prev => ({ ...prev, [p.id]: false }))
       }
     })
@@ -38,8 +50,11 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
     const info = await getTracking(trackingNumber, finalCarrier)
     if (info) {
       setTrackingInfo(prev => ({ ...prev, [p.id]: info }))
-      if (info.eta && !p.eta) {
-        await upsertPO({ ...p, tracking_number: trackingNumber, carrier_slug: finalCarrier, eta: info.eta.split('T')[0] })
+      // Always overwrite p.eta when tracking returns an eta, even if a manual
+      // one was already there — tracking is the source of truth.
+      const iso = extractIsoDate(info.eta)
+      if (iso) {
+        await upsertPO({ ...p, tracking_number: trackingNumber, carrier_slug: finalCarrier, eta: iso })
       }
     }
     setLoadingTracking(prev => ({ ...prev, [p.id]: false }))
@@ -135,8 +150,8 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
                       : <span style={{ fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</span>}
                   </td>
                   <td style={tdS}>
-                    <input type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={dateInputS} />
-                    {liveInfo?.eta && typeof liveInfo.eta === 'string' && liveInfo.eta.match(/\d{4}/) && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>📅 {(() => { const m = liveInfo.eta.match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${parseInt(m[2])}/${parseInt(m[3])}/${m[1]}` : '' })()}</div>}
+                    <input key={p.eta || 'none'} type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={dateInputS} />
+                    {liveInfo?.eta && extractIsoDate(liveInfo.eta) && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>📡 from tracking</div>}
                   </td>
                   <td style={{ ...tdS, fontSize: 11 }}>
                     {isDraft

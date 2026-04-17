@@ -27,8 +27,15 @@ function fmtTrackDate(val) {
   } catch (e) { return '' }
 }
 
+// Pull a YYYY-MM-DD date out of any tracking eta string, or return null.
+function extractIsoDate(val) {
+  if (!val) return null
+  const s = typeof val === 'string' ? val : JSON.stringify(val)
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
+}
+
 // Helper: receive-date display used throughout the app for AWD/FBA rows
-// Returns { dateText, subText } where subText is short ("in 14d" / "3d overdue" / "Today")
 export function receiveDateDisplay(etaIso) {
   if (!etaIso) return { dateText: 'TBD', subText: '' }
   const days = daysUntil(etaIso)
@@ -43,21 +50,33 @@ export function receiveDateDisplay(etaIso) {
 }
 
 // ContainerRow — one tracking entry per container within an AWD PO.
-// Each container has its OWN eta, box_count and dest so different containers
-// arriving separately can be tracked independently.
-function ContainerRow({ container, poDest, onUpdate, onDelete }) {
+// Containers inherit the PO's destination (no more per-container dest dropdown).
+// The receive-date input is writable, but tracking results will always
+// overwrite it whenever 17TRACK returns an ETA.
+function ContainerRow({ container, onUpdate, onDelete }) {
   const [trackingInfo, setTrackingInfo] = useState(null)
   const [loading, setLoading] = useState(false)
   const [val, setVal] = useState(container.tracking_number || '')
+
+  // Sync tracking → container.eta
+  const syncEtaFromTracking = useCallback((info) => {
+    const iso = extractIsoDate(info?.eta)
+    if (iso && iso !== container.eta) {
+      onUpdate(container.id, { eta: iso })
+    }
+  }, [container.id, container.eta, onUpdate])
 
   useEffect(() => {
     if (container.tracking_number && !isDirectOnly(container.tracking_number)) {
       setLoading(true)
       getTracking(container.tracking_number)
-        .then(info => setTrackingInfo(info))
+        .then(info => {
+          setTrackingInfo(info)
+          if (info) syncEtaFromTracking(info)
+        })
         .finally(() => setLoading(false))
     }
-  }, [container.tracking_number])
+  }, [container.tracking_number, syncEtaFromTracking])
 
   const handleBlur = async () => {
     const trimmed = val.trim()
@@ -68,11 +87,7 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
       setTimeout(async () => {
         const info = await getTracking(trimmed)
         setTrackingInfo(info)
-        // Auto-fill ETA from tracking if the container doesn't have one yet
-        if (info?.eta && !container.eta) {
-          const m = String(info.eta).match(/(\d{4})-(\d{2})-(\d{2})/)
-          if (m) onUpdate(container.id, { eta: `${m[1]}-${m[2]}-${m[3]}` })
-        }
+        if (info) syncEtaFromTracking(info)
       }, 2000)
     }
   }
@@ -84,15 +99,13 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
   const { dateText, subText } = receiveDateDisplay(container.eta)
   const rc = arrivalColor(daysUntil(container.eta))
 
-  // Destination options — if the parent PO is SG default options are AWD/FBA, else AWD/FBA/RT AWD
-  const destOpts = ['AWD', 'FBA', 'RT AWD']
-
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderBottom: '1px dashed #e0e0e0', flexWrap: 'wrap' }}>
       <span style={{ fontSize: 10, color: '#888', minWidth: 60, paddingTop: 4 }}>Container {container.container_num}</span>
 
       {/* Tracking input */}
-      <div style={{ flex: 1, minWidth: 150 }}>
+      <div style={{ flex: 1, minWidth: 160 }}>
+        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Tracking #</div>
         <input
           type="text"
           value={val}
@@ -104,19 +117,6 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
         {detected && !container.tracking_number && (
           <div style={{ fontSize: 9, color: '#27500A', background: '#EAF3DE', padding: '2px 5px', borderRadius: 3, marginTop: 2 }}>✓ {detected.name}</div>
         )}
-      </div>
-
-      {/* Dest per container */}
-      <div style={{ minWidth: 80 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Dest</div>
-        <select
-          value={container.dest || poDest || ''}
-          onChange={e => onUpdate(container.id, { dest: e.target.value || null })}
-          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%' }}
-        >
-          <option value=''>--</option>
-          {destOpts.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
       </div>
 
       {/* Boxes per container */}
@@ -134,11 +134,12 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
         />
       </div>
 
-      {/* ETA input — each container can have a different receive date */}
-      <div style={{ minWidth: 120 }}>
+      {/* Est. Receive Date — auto-updates from tracking, but editable if tracking has no ETA yet. */}
+      <div style={{ minWidth: 130 }}>
         <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Est. Receive</div>
         <input
           type="date"
+          key={container.eta || 'none'}
           defaultValue={container.eta || ''}
           onBlur={e => onUpdate(container.id, { eta: e.target.value || null })}
           style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%' }}
@@ -148,10 +149,14 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
             {dateText}{subText ? ` (${subText})` : ''}
           </div>
         )}
+        {trackingInfo?.eta && (
+          <div style={{ fontSize: 8, color: '#27500A', marginTop: 1, textAlign: 'center' }}>📡 from tracking</div>
+        )}
       </div>
 
       {/* Status */}
       <div style={{ minWidth: 140, fontSize: 10 }}>
+        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Status</div>
         {loading && <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>}
         {isDirect && directUrl && (
           <a href={directUrl} target="_blank" rel="noopener noreferrer"
@@ -180,7 +185,7 @@ function ContainerRow({ container, poDest, onUpdate, onDelete }) {
   )
 }
 
-// AWD PO Row — expandable with sub-containers. Exported so SGTab can reuse it.
+// AWD PO Row — expandable with sub-containers. Exported so RT/SG tabs can reuse it.
 export function AWDPORow({ po, upsertPO }) {
   const [expanded, setExpanded] = useState(false)
   const [containers, setContainers] = useState([])
@@ -200,8 +205,7 @@ export function AWDPORow({ po, upsertPO }) {
     if (expanded) loadContainers()
   }, [expanded, loadContainers])
 
-  // Compute the earliest container ETA so the main row summary always reflects
-  // the earliest receive date across all containers. Falls back to po.eta.
+  // Earliest container ETA drives the summary row.
   const earliestContainerEta = containers.reduce((best, c) => {
     if (!c.eta) return best
     if (!best) return c.eta
@@ -218,7 +222,6 @@ export function AWDPORow({ po, upsertPO }) {
     const { data } = await supabase.from('awd_containers').insert({
       po_id: po.id,
       container_num: nextNum,
-      dest: po.dest || null,
       eta: po.eta || null,
     }).select().single()
     if (data) setContainers(prev => [...prev, data])
@@ -307,6 +310,7 @@ export function AWDPORow({ po, upsertPO }) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#1F3864' }}>
                 Containers for PO #{safeStr(po.id)} — {safeStr(po.supplier)}
+                {po.dest && <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>· going to {po.dest}</span>}
               </span>
               <button onClick={addContainer}
                 style={{ fontSize: 11, padding: '5px 14px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
@@ -316,11 +320,11 @@ export function AWDPORow({ po, upsertPO }) {
             {loadingContainers && <div style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>Loading…</div>}
             {!loadingContainers && containers.length === 0 && (
               <div style={{ color: '#aaa', fontSize: 11, fontStyle: 'italic', padding: '8px 0' }}>
-                No containers yet — click "+ Add Container" to start adding tracking numbers, receive dates, boxes, and destinations per container
+                No containers yet — click "+ Add Container" to start adding tracking numbers, boxes and per-container receive dates
               </div>
             )}
             {containers.map(c => (
-              <ContainerRow key={c.id} container={c} poDest={po.dest}
+              <ContainerRow key={c.id} container={c}
                 onUpdate={updateContainer} onDelete={deleteContainer} />
             ))}
           </td>
@@ -330,8 +334,7 @@ export function AWDPORow({ po, upsertPO }) {
   )
 }
 
-// AWDPOTable — renders the expandable row table. Exported so SGTab can reuse it
-// filtered to SG-entity rows.
+// AWDPOTable — shared expandable-row table, reusable across tabs.
 export function AWDPOTable({ pos, upsertPO, entityFilter }) {
   const awdPos = pos
     .filter(p => p.dest === 'AWD' || p.dest === 'FBA' || p.dest === 'RT AWD')
@@ -402,7 +405,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
       <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Shipments</h2>
-          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All AWD and FBA inbound orders — click a row to manage containers (each container has its own receive date, boxes and destination)</p>
+          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All AWD and FBA inbound orders — click a row to manage containers. Each container can have its own tracking # and receive date; destination is set on the PO.</p>
         </div>
         <div style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
           <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>

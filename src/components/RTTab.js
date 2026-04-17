@@ -1,7 +1,8 @@
 import React from 'react'
-import { SUPP_COLORS, SUPP_DESTS } from '../constants'
+import { SUPP_COLORS } from '../constants'
 import OrderCalendar from './OrderCalendar'
 import POTable from './POTable'
+import { AWDPOTable } from './AWDTab'
 
 export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
   const suppliers = rtConfig.map(c => ({
@@ -22,10 +23,13 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <POTable tableId="rt-bb" pos={pos} isSG={false} showShip={true}
         upsertPO={upsertPO} deletePO={deletePO} showModal={showModal} closeModal={closeModal} />
 
-      <div style={bigSecStyle}>RT AWD Open POs and Arrivals</div>
+      <div style={bigSecStyle}>RT AWD and FBA Open POs and Arrivals</div>
+      <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+        Click any row to expand and manage containers — each container can have its own tracking number, boxes and estimated receive date.
+      </p>
       <ArrivalLegend />
-      <POTable tableId="rt-awd" pos={pos} isSG={false} showShip={false}
-        upsertPO={upsertPO} deletePO={deletePO} showModal={showModal} closeModal={closeModal} />
+      {/* Same expandable row+containers table as SG / AWD/FBA tab, filtered to RT. */}
+      <AWDPOTable pos={pos} upsertPO={upsertPO} entityFilter="RT" />
     </div>
   )
 }
