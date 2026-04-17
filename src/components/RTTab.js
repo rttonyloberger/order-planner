@@ -15,7 +15,8 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <div style={secStyle}>Projected order calendar</div>
       <Legend items={suppliers.map(s => ({ c: (SUPP_COLORS[s.name] || {}).b || '#999', l: s.name }))} />
       <OrderCalendar suppliers={suppliers} styleMap={SUPP_COLORS} calState={calState} months={months}
-        upsertCalState={upsertCalState} isSG={false} pos={pos} />
+        upsertCalState={upsertCalState} isSG={false} pos={pos}
+        upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
 
       <div style={bigSecStyle}>RT Big Bend (BB) Open POs and Arrivals</div>
       <POTable tableId="rt-bb" pos={pos} isSG={false} showShip={true}

@@ -100,10 +100,8 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               const sc = SUPP_COLORS[p.supplier] || { bg: '#f5f5f5', fc: '#333', b: '#ccc' }
               const days = daysUntil(p.eta)
               const ac = arrivalColor(days)
-              const isAWDTable = tableId === 'sg-awdfba' || tableId === 'rt-awd'
               const etaDateStr = p.eta ? (() => { const [y,m,d] = p.eta.split('-'); return `${parseInt(m)}/${parseInt(d)}/${y}` })() : 'TBD'
-              const daysLabel = days === null ? '' : days < 0 ? ` (${Math.abs(days)}d overdue)` : days === 0 ? ' (today)' : ` (in ${days}d)`
-              const dTxt = isAWDTable ? etaDateStr : (days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`)
+              const subText = days === null ? '' : days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `in ${days}d`
               const isDraft = (p.status || 'Draft') === 'Draft'
               const sc2 = statusColor(p.status)
               const db = p.dest === 'AWD' || p.dest === 'RT AWD' ? { bg: '#E6F1FB', fc: '#0C447C' } : p.dest === 'FBA' ? { bg: '#EEEDFE', fc: '#3C3489' } : { bg: '#F1EFE8', fc: '#444441' }
@@ -171,13 +169,12 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
                       </div>
                     </td>
                   )}
-                  <td style={{ ...tdS, fontWeight: 700, minWidth: 90, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
-                    {isAWDTable ? (
-                      <div>
-                        <div style={{ fontSize: 11 }}>{etaDateStr}</div>
-                        {days !== null && p.eta && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `in ${days}d`}</div>}
-                      </div>
-                    ) : dTxt}
+                  {/* Est. Receive Date — always displays the actual date plus a small "in Xd / Xd overdue" helper. */}
+                  <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
+                    <div>
+                      <div style={{ fontSize: 11 }}>{etaDateStr}</div>
+                      {p.eta && subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
+                    </div>
                   </td>
                 </tr>
               )
