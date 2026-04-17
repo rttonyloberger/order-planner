@@ -254,11 +254,16 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             </>}
                           </div>
                         </td>
-                        <td style={{ ...tdS, fontWeight: 700, minWidth: 100, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }}>
+                        <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }}>
                           {isDelivered ? 'Delivered' : (
                             <div>
-                              <div style={{ fontWeight: 700 }}>{dTxt}</div>
-                              {hasInfo && info.eta && typeof info.eta === 'string' && info.eta.match(/\d{4}/) && (
+                              <div style={{ fontSize: 11 }}>{p.eta ? fmtTrackDate(p.eta) : 'TBD'}</div>
+                              {days !== null && p.eta && (
+                                <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>
+                                  {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `in ${days}d`}
+                                </div>
+                              )}
+                              {hasInfo && info.eta && typeof info.eta === 'string' && info.eta.includes('-') && (
                                 <div style={{ fontSize: 9, fontWeight: 400, marginTop: 2, color: '#27500A' }}>
                                   📅 {fmtTrackDate(info.eta)}
                                 </div>
