@@ -85,13 +85,35 @@ export function useStore() {
     }
   }, [])
 
+  // Helper: when a PO is saved, if its order_date is newer than the supplier's
+  // current last_order_date in rt_config / sg_config, bump the config. Matches
+  // on config.name === po.supplier (case-insensitive, trimmed).
+  const maybeAdvanceLastOrderDate = useCallback(async (po) => {
+    if (!po?.order_date || !po?.supplier) return
+    const supplierKey = String(po.supplier).trim().toLowerCase()
+    const entity = po.entity || (po.table_id?.startsWith('sg') ? 'SG' : 'RT')
+    const configList = entity === 'SG' ? sgConfig : rtConfig
+    const table = entity === 'SG' ? 'sg_config' : 'rt_config'
+    const match = configList.find(c => String(c.name || '').trim().toLowerCase() === supplierKey)
+    if (!match) return
+    const current = match.last_order_date
+    // Only advance if the new order date is strictly newer.
+    if (current && new Date(po.order_date) <= new Date(current)) return
+    const { error } = await supabase.from(table)
+      .update({ last_order_date: po.order_date, updated_at: new Date().toISOString() })
+      .eq('id', match.id)
+    if (error) console.error('last_order_date auto-update error:', error)
+  }, [rtConfig, sgConfig])
+
   // Actions
   const upsertPO = useCallback(async (po) => {
     const { error } = await supabase.from('purchase_orders').upsert({
       ...po, updated_at: new Date().toISOString()
     })
     if (error) console.error('upsertPO error:', error)
-  }, [])
+    // Fire-and-forget: bump the supplier's last_order_date if the new PO is newer.
+    maybeAdvanceLastOrderDate(po)
+  }, [maybeAdvanceLastOrderDate])
 
   const deletePO = useCallback(async (id) => {
     const { error } = await supabase.from('purchase_orders').delete().eq('id', id)
