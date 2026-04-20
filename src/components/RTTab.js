@@ -1,8 +1,12 @@
 import React from 'react'
-import { SUPP_COLORS } from '../constants'
+import { SUPP_COLORS, RT_PRODUCTS } from '../constants'
 import OrderCalendar from './OrderCalendar'
 import POTable from './POTable'
-import { AWDPOTable } from './AWDTab'
+import { AWDPOTable, AddAWDPORow } from './AWDTab'
+
+// Suppliers list used by the RT add-PO rows. Matches the list in POTable.js
+// so both BB and AWD add-rows offer the same dropdown.
+const RT_SUPPLIERS = ['Dongyang Shanye Fishing','I-Lure','Sourcepro','WEIGHT CO','JXL','Weihai Huayue Sports','XINGTAI XIOU IMPORT']
 
 export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
   const suppliers = rtConfig.map(c => ({
@@ -32,6 +36,16 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
         tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT" />
+      <AddAWDPORow
+        tableId="rt-awd"
+        entity="RT"
+        defaultDest="RT AWD"
+        destOptions={['RT AWD']}
+        suppliers={RT_SUPPLIERS}
+        productOptions={RT_PRODUCTS}
+        upsertPO={upsertPO}
+        label="Add a new RT AWD PO"
+      />
     </div>
   )
 }

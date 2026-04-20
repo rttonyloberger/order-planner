@@ -1,7 +1,34 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
+
+// Today's date as YYYY-MM-DD — used to default the Date Received popup.
+function todayIsoStr() {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+// Date-received form used inside the Complete modal (via Modal's `children` prop).
+function DateReceivedForm({ dateRef, poId }) {
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: '#555', lineHeight: 1.5, marginBottom: 10 }}>
+        When was PO #{poId} received? This date will show on the Completed POs tab.
+      </p>
+      <label style={{ fontSize: 11, color: '#555', display: 'block', marginBottom: 4 }}>Date received</label>
+      <input
+        type="date"
+        defaultValue={dateRef.current}
+        onChange={e => { dateRef.current = e.target.value }}
+        style={{ fontSize: 13, padding: '7px 10px', border: '1px solid #ccc', borderRadius: 6, width: '100%' }}
+      />
+    </div>
+  )
+}
 
 function safeStr(val) {
   if (val == null) return ''
@@ -44,6 +71,11 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   const [lastRefresh, setLastRefresh] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [expandedId, setExpandedId] = useState(null)
+  // Container map keyed by po_id. Loaded in bulk so rows can show their
+  // container count and (when expanded) per-container ETAs without each row
+  // firing its own query.
+  const [containerMap, setContainerMap] = useState({})
+  const [expandedContainersId, setExpandedContainersId] = useState(null)
 
   const bbPos = pos
     .filter(p => p.dest === 'BB' && p.status !== 'Complete')
@@ -53,6 +85,23 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       if (!b.eta) return -1
       return new Date(a.eta) - new Date(b.eta)
     })
+
+  // Bulk-load containers for every BB PO shown in this tab so each row can
+  // render its container count inline and expand to show per-container ETAs.
+  useEffect(() => {
+    async function loadAllContainers() {
+      if (bbPos.length === 0) { setContainerMap({}); return }
+      const ids = bbPos.map(p => p.id)
+      const { data } = await supabase.from('awd_containers').select('*').in('po_id', ids).order('container_num')
+      const byPO = {}
+      for (const c of (data || [])) {
+        if (!byPO[c.po_id]) byPO[c.po_id] = []
+        byPO[c.po_id].push(c)
+      }
+      setContainerMap(byPO)
+    }
+    loadAllContainers()
+  }, [bbPos.map(p => p.id).join(',')])
 
   const loadOne = useCallback(async (po) => {
     if (!po.tracking_number) return
@@ -98,11 +147,17 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   }
 
   const handleMarkComplete = (po) => {
+    // Ask for the actual date received, then flip status to Complete (no
+    // delete) so the PO lands on the Completed POs archive tab.
+    const dateRef = { current: po.received_date || todayIsoStr() }
     showModal({
-      title: 'Mark as Complete?',
-      body: `PO #${po.id} from ${po.supplier} has been delivered. Mark it complete and remove it from the receiving list?`,
-      confirmLabel: 'Yes, mark complete',
-      onConfirm: () => { deletePO(po.id); closeModal() }
+      title: 'Mark as Complete',
+      confirmLabel: 'Mark as Received',
+      children: <DateReceivedForm dateRef={dateRef} poId={po.id} />,
+      onConfirm: () => {
+        upsertPO({ ...po, status: 'Complete', received_date: dateRef.current || todayIsoStr() })
+        closeModal()
+      }
     })
   }
 
@@ -163,6 +218,12 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   const hasInfo = info && !info.noData
                   const isDelivered = hasInfo && info.statusCode === 'Delivered'
                   const opts = p.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
+                  // Per-PO container info (pre-loaded in bulk). Only POs with
+                  // more than one container get the inline expand toggle —
+                  // single-container BB POs already show their info on the row.
+                  const containers = containerMap[p.id] || []
+                  const hasMultipleContainers = containers.length > 1
+                  const isContainersExpanded = expandedContainersId === p.id
 
                   // Days away cell — show Delivered if delivered
                   const dTxt = days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`
@@ -190,7 +251,18 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                       )}
 
                       <tr style={{ background: isDelivered ? '#F5FAF0' : sc.bg + '18', borderBottom: '1px solid #f0f0f0', opacity: isDelivered ? 0.85 : 1 }}>
-                        <td style={{ ...tdS, fontWeight: 700, background: isDelivered ? '#EAF3DE' : sc.bg, color: isDelivered ? '#27500A' : sc.fc, borderLeft: `3px solid ${isDelivered ? '#639922' : sc.b}`, textAlign: 'left', minWidth: 140 }}>{safeStr(p.supplier)}</td>
+                        <td style={{ ...tdS, fontWeight: 700, background: isDelivered ? '#EAF3DE' : sc.bg, color: isDelivered ? '#27500A' : sc.fc, borderLeft: `3px solid ${isDelivered ? '#639922' : sc.b}`, textAlign: 'left', minWidth: 140 }}>
+                          <div>{safeStr(p.supplier)}</div>
+                          {hasMultipleContainers && (
+                            <button
+                              onClick={() => setExpandedContainersId(isContainersExpanded ? null : p.id)}
+                              style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                              title="Show per-container tracking and ETAs"
+                            >
+                              {isContainersExpanded ? '▼' : '▶'} {containers.length} containers
+                            </button>
+                          )}
+                        </td>
                         <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{safeStr(p.id)}</td>
                         <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(p.entity)}</span></td>
                         <td style={{ ...tdS, minWidth: 120 }}>
@@ -284,6 +356,47 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                           )}
                         </td>
                       </tr>
+
+                      {/* Per-container detail panel — only shown for multi-container POs */}
+                      {isContainersExpanded && hasMultipleContainers && (
+                        <tr>
+                          <td colSpan={16} style={{ padding: '12px 20px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#1F3864', marginBottom: 10 }}>
+                              Containers for PO #{safeStr(p.id)} — {safeStr(p.supplier)}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
+                              {containers.map(c => {
+                                const cDays = daysUntil(c.eta)
+                                const cColor = arrivalColor(cDays)
+                                const cEtaText = c.eta
+                                  ? (() => { const [y, m, d] = c.eta.split('-'); return `${parseInt(m)}/${parseInt(d)}/${y}` })()
+                                  : 'TBD'
+                                const cSub = cDays === null ? '' : cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`
+                                return (
+                                  <div key={c.id} style={{ background: '#fff', border: '1px solid #d0d7e2', borderRadius: 8, padding: '10px 12px' }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 6 }}>
+                                      Container {c.container_num}
+                                      {c.dest && <span style={{ marginLeft: 8, fontSize: 9, padding: '1px 7px', borderRadius: 8, background: '#E6F1FB', color: '#0C447C', fontFamily: 'monospace' }}>{c.dest}</span>}
+                                    </div>
+                                    {c.tracking_number
+                                      ? <div style={{ fontSize: 10, color: '#444', marginBottom: 4, fontFamily: 'monospace' }}>📦 {c.tracking_number}</div>
+                                      : <div style={{ fontSize: 10, color: '#aaa', fontStyle: 'italic', marginBottom: 4 }}>No tracking # yet</div>}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                                      <span style={{ fontSize: 10, color: '#666' }}>Est. receive</span>
+                                      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 6, background: cColor.bg, color: cColor.fc, border: `1px solid ${cColor.border}` }}>
+                                        {cEtaText}{cSub ? ` · ${cSub}` : ''}
+                                      </span>
+                                    </div>
+                                    {c.box_count != null && c.box_count !== '' && (
+                                      <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>{c.box_count} boxes</div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
 
                       {/* Expanded event history */}
                       {isExpanded && hasInfo && info.events?.length > 0 && (

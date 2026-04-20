@@ -18,7 +18,10 @@ export default function CompletedTab({ pos, upsertPO, deletePO, showModal, close
   const sgAwdCount = countCompleted(['sg-awdfba'], 'SG')
   const totalCount = rtBbCount + rtAwdCount + sgBbCount + sgAwdCount
 
-  const commonProps = { pos, upsertPO, deletePO, showModal, closeModal, showCompleted: true }
+  // showCompleted flips the filter + column layout; allowContainerExpand={false}
+  // hides the container dropdown in the completed archive (per Tony's request —
+  // once a PO is done, we don't need to keep re-opening the container detail).
+  const commonProps = { pos, upsertPO, deletePO, showModal, closeModal, showCompleted: true, allowContainerExpand: false }
 
   return (
     <div>
@@ -37,12 +40,12 @@ export default function CompletedTab({ pos, upsertPO, deletePO, showModal, close
       {/* RT */}
       <GroupHeader entity="RT" color="#0C447C" />
 
-      <SubHeader label="RT BB Receiving" count={rtBbCount} />
+      <SubHeader label="RT BB Received" count={rtBbCount} />
       <AWDPOTable {...commonProps}
         tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT"
         emptyMessage="No completed RT BB POs yet." />
 
-      <SubHeader label="RT AWD Receiving" count={rtAwdCount} />
+      <SubHeader label="RT AWD Received" count={rtAwdCount} />
       <AWDPOTable {...commonProps}
         tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT"
         emptyMessage="No completed RT AWD POs yet." />
@@ -50,12 +53,12 @@ export default function CompletedTab({ pos, upsertPO, deletePO, showModal, close
       {/* SG */}
       <GroupHeader entity="SG" color="#27500A" />
 
-      <SubHeader label="SG BB Receiving" count={sgBbCount} />
+      <SubHeader label="SG BB Received" count={sgBbCount} />
       <AWDPOTable {...commonProps}
         tableIds={['sg-bb']} destOptions={['BB']} entityFilter="SG"
         emptyMessage="No completed SG BB POs yet." />
 
-      <SubHeader label="SG AWD/FBA Receiving" count={sgAwdCount} />
+      <SubHeader label="SG AWD/FBA Received" count={sgAwdCount} />
       <AWDPOTable {...commonProps}
         tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG"
         emptyMessage="No completed SG AWD/FBA POs yet." />

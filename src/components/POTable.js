@@ -1,12 +1,40 @@
 import React, { useState, useEffect } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, TRACKING_STATUSES, detectCarrier, registerTracking, getTracking } from '../tracking'
+import PODocsCell from './PODocsCell'
 
 // Pull a YYYY-MM-DD substring out of whatever 17TRACK gave us.
 function extractIsoDate(val) {
   if (!val || typeof val !== 'string') return null
   const m = val.match(/(\d{4})-(\d{2})-(\d{2})/)
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null
+}
+
+// Today's ISO (YYYY-MM-DD) for defaulting the "Date Received" popup.
+function todayIso() {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+// Date-received form for the Complete modal. `dateRef.current` holds the
+// chosen date; the surrounding handleStatus reads it on confirm.
+function DateReceivedForm({ dateRef, poId }) {
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: '#555', lineHeight: 1.5, marginBottom: 10 }}>
+        When was PO #{poId} received? This date will show on the Completed POs tab.
+      </p>
+      <label style={{ fontSize: 11, color: '#555', display: 'block', marginBottom: 4 }}>Date received</label>
+      <input
+        type="date"
+        defaultValue={dateRef.current}
+        onChange={e => { dateRef.current = e.target.value }}
+        style={{ fontSize: 13, padding: '7px 10px', border: '1px solid #ccc', borderRadius: 6, width: '100%' }}
+      />
+    </div>
+  )
 }
 
 export default function POTable({ tableId, pos, isSG, showShip, upsertPO, deletePO, showModal, closeModal }) {
@@ -71,11 +99,16 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
         onConfirm: () => { deletePO(p.id); closeModal() }
       })
     } else if (val === 'Complete') {
+      // Prompt for the actual date the PO was received before archiving it.
+      const dateRef = { current: p.received_date || todayIso() }
       showModal({
-        title: 'Mark as Complete?',
-        body: `PO #${p.id} will move to the Completed POs tab.`,
-        confirmLabel: 'Yes, mark complete',
-        onConfirm: () => { update(p, 'status', 'Complete'); closeModal() }
+        title: 'Mark as Complete',
+        confirmLabel: 'Mark as Received',
+        children: <DateReceivedForm dateRef={dateRef} poId={p.id} />,
+        onConfirm: () => {
+          upsertPO({ ...p, status: 'Complete', received_date: dateRef.current || todayIso() })
+          closeModal()
+        }
       })
     } else {
       update(p, 'status', val)
@@ -97,6 +130,12 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
     setAddRow({ supplier: '', id: '', status: 'Committed', dest: '', order_date: '', eta: '', po_value: '', product_type: '' })
   }
 
+  // Column count tracker so footer/add-row colspans line up correctly.
+  // Fixed columns: Supplier, PO #, Status, Dest, Order Date, ETA, PO Value,
+  //                Tracking, Docs, Est. Receive Date  (10)
+  // Optional:     + Product (if isSG), + FCL/LCL (if showShip)
+  const columnCount = 10 + (isSG ? 1 : 0) + (showShip ? 1 : 0)
+
   return (
     <div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>PO Value and Order Date editable in Draft. ETA changes re-sort by arrival.</p>
@@ -114,6 +153,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <th style={thS}>PO Value</th>
               <th style={{ ...thS, minWidth: 220 }}>Tracking</th>
               {showShip && <th style={thS}>FCL / LCL</th>}
+              <th style={{ ...thS, minWidth: 200 }}>Docs</th>
               <th style={thS}>Est. Receive Date</th>
             </tr>
           </thead>
@@ -191,6 +231,10 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
                       </div>
                     </td>
                   )}
+                  {/* Docs — attach/preview docs tied to the PO (packing lists, invoices, etc). */}
+                  <td style={{ ...tdS, minWidth: 200, verticalAlign: 'top', padding: '8px' }}>
+                    <PODocsCell poId={p.id} />
+                  </td>
                   {/* Est. Receive Date — always displays the actual date plus a small "in Xd / Xd overdue" helper. */}
                   <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
                     <div>
@@ -202,7 +246,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               )
             })}
             <tr style={{ background: '#f5f5f3', borderTop: '2px solid #ddd' }}>
-              <td colSpan={(isSG ? 1 : 0) + (showShip ? 1 : 0) + 8} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
+              <td colSpan={columnCount - 1} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
                 {rows.length} open POs{total ? `   |   Total committed: ${fmtMoney(total)}` : ''}
               </td>
               <td />
@@ -218,6 +262,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <td style={tdS}><input type="number" style={{ ...addInpS, width: 88 }} placeholder="Value $" value={addRow.po_value} onChange={e => setAddRow(r => ({...r, po_value: e.target.value}))} /></td>
               <td style={tdS}><button style={{ padding: '5px 10px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }} onClick={submitAdd}>+ Add</button></td>
               {showShip && <td style={tdS} />}
+              <td style={tdS} />
               <td style={tdS} />
             </tr>
           </tbody>

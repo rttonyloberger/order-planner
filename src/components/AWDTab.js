@@ -35,6 +35,14 @@ function extractIsoDate(val) {
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null
 }
 
+// Today's date as YYYY-MM-DD for defaulting the "Date Received" input.
+function todayIso() {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
 // Helper: receive-date display used throughout the app for AWD/FBA rows
 export function receiveDateDisplay(etaIso) {
   if (!etaIso) return { dateText: 'TBD', subText: '' }
@@ -198,9 +206,37 @@ function ContainerRow({ container, onUpdate, onDelete }) {
   )
 }
 
+// Date-received form — rendered inside the Modal via the `children` prop when
+// the user flips status to Complete. Writes to `dateRef.current` on change so
+// the modal's onConfirm can read the final value via closure.
+function DateReceivedForm({ dateRef, poId }) {
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: '#555', lineHeight: 1.5, marginBottom: 10 }}>
+        When was PO #{poId} received? This date will show on the Completed POs tab.
+      </p>
+      <label style={{ fontSize: 11, color: '#555', display: 'block', marginBottom: 4 }}>Date received</label>
+      <input
+        type="date"
+        defaultValue={dateRef.current}
+        onChange={e => { dateRef.current = e.target.value }}
+        style={{ fontSize: 13, padding: '7px 10px', border: '1px solid #ccc', borderRadius: 6, width: '100%' }}
+      />
+    </div>
+  )
+}
+
 // AWD PO Row — expandable with sub-containers. Exported so RT/SG tabs can reuse it.
-// isDraft gates all PO-level editing. Status dropdown always available.
-export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal }) {
+// isDraft gates all PO-level editing. Status dropdown always available unless
+// readOnlyStatus is set.
+// Props:
+//  - allowContainerExpand: when false, row can't be expanded to show containers
+//    (used in the Completed POs tab so the team doesn't accidentally keep
+//    poking at container rows for archived orders).
+//  - readOnlyStatus: when true, the status cell is shown as a badge instead of
+//    a dropdown (used on the AWD/FBA Receiving tab where status is managed
+//    from the originating RT / SG tabs).
+export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal, allowContainerExpand = true, readOnlyStatus = false }) {
   const [expanded, setExpanded] = useState(false)
   const [containers, setContainers] = useState([])
   const [loadingContainers, setLoadingContainers] = useState(false)
@@ -208,6 +244,7 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
   const sc = SUPP_COLORS[po.supplier] || { bg: '#f5f5f5', fc: '#333', b: '#ccc' }
   const opts = po.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
   const isDraft = (po.status || 'Draft') === 'Draft'
+  const isComplete = po.status === 'Complete'
 
   const statusColor = s => s === 'Committed' ? { bg: '#E6F1FB', fc: '#0C447C' }
                          : s === 'Complete'  ? { bg: '#EAF3DE', fc: '#27500A' }
@@ -225,11 +262,16 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
         onConfirm: () => { deletePO?.(po.id); closeModal?.() }
       })
     } else if (val === 'Complete') {
+      // Capture received date via a ref so the modal's onConfirm can read it.
+      const dateRef = { current: po.received_date || todayIso() }
       showModal?.({
-        title: 'Mark as Complete?',
-        body: `PO #${po.id} will move to the Completed POs tab.`,
-        confirmLabel: 'Yes, mark complete',
-        onConfirm: () => { upsertPO({ ...po, status: 'Complete' }); closeModal?.() }
+        title: 'Mark as Complete',
+        confirmLabel: 'Mark as Received',
+        children: <DateReceivedForm dateRef={dateRef} poId={po.id} />,
+        onConfirm: () => {
+          upsertPO({ ...po, status: 'Complete', received_date: dateRef.current || todayIso() })
+          closeModal?.()
+        }
       })
     } else {
       upsertPO({ ...po, status: val })
@@ -243,9 +285,11 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
     setLoadingContainers(false)
   }, [po.id])
 
+  // Load containers on mount (not just on expand) so the summary row can
+  // show the box total and container count before the team clicks in.
   useEffect(() => {
-    if (expanded) loadContainers()
-  }, [expanded, loadContainers])
+    loadContainers()
+  }, [loadContainers])
 
   // Earliest container ETA drives the summary row.
   const earliestContainerEta = containers.reduce((best, c) => {
@@ -256,6 +300,9 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
   const effectiveEta = earliestContainerEta || po.eta
   const { dateText, subText } = receiveDateDisplay(effectiveEta)
   const ac = arrivalColor(daysUntil(effectiveEta))
+
+  // For completed POs we show the received_date in place of the ETA/receive-date column.
+  const receivedText = po.received_date ? fmtTrackDate(po.received_date) : fmtTrackDate(po.eta) || '—'
 
   const totalBoxes = containers.reduce((sum, c) => sum + (c.box_count || 0), 0)
 
@@ -286,12 +333,20 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
            : po.dest === 'FBA' ? { bg: '#EEEDFE', fc: '#3C3489' }
            : { bg: '#F1EFE8', fc: '#444441' }
 
+  const rowClickable = allowContainerExpand
+
+  // Column counts for the row layout:
+  //   completed view: Supplier, PO #, Entity, Dest, Product, Status, Order Date, PO Value,
+  //                   Boxes, Containers, Docs, Date Received   (12 cols)
+  //   open view:      + ETA column                              (13 cols)
+  const colSpanForExpansion = isComplete && !allowContainerExpand ? 12 : 13
+
   return (
     <>
-      <tr style={{ background: sc.bg + '18', borderBottom: expanded ? 'none' : '1px solid #f0f0f0', cursor: 'pointer' }}
-        onClick={() => setExpanded(e => !e)}>
+      <tr style={{ background: sc.bg + '18', borderBottom: expanded ? 'none' : '1px solid #f0f0f0', cursor: rowClickable ? 'pointer' : 'default' }}
+        onClick={rowClickable ? () => setExpanded(e => !e) : undefined}>
         <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>
-          <span style={{ marginRight: 6, fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>{safeStr(po.supplier)}
+          {rowClickable && <span style={{ marginRight: 6, fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>}{safeStr(po.supplier)}
         </td>
         <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>#{safeStr(po.id)}</td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
@@ -323,25 +378,34 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
           )}
         </td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
-          <select
-            style={{ ...selS, background: sc2.bg, color: sc2.fc, borderColor: sc2.fc + '44' }}
-            value={po.status || 'Draft'}
-            onChange={e => handleStatus(e.target.value)}
-          >
-            <option value='Draft'>Draft</option>
-            <option value='Committed'>Committed</option>
-            <option value='Complete'>Complete</option>
-            <option value='Delete'>Delete</option>
-          </select>
-        </td>
-        <td style={{ ...tdS, fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>{fmtDate(po.order_date)}</td>
-        <td style={tdS} onClick={e => e.stopPropagation()}>
-          {isDraft ? (
-            <input key={po.eta || 'none'} type="date" defaultValue={po.eta || ''} onBlur={e => update('eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+          {readOnlyStatus ? (
+            <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 10, fontWeight: 600, background: sc2.bg, color: sc2.fc, border: `1px solid ${sc2.fc}22`, display: 'inline-block' }}>
+              {po.status || 'Draft'}
+            </span>
           ) : (
-            <span style={{ fontSize: 11, color: '#444' }}>{fmtDate(po.eta) || '—'}</span>
+            <select
+              style={{ ...selS, background: sc2.bg, color: sc2.fc, borderColor: sc2.fc + '44' }}
+              value={po.status || 'Draft'}
+              onChange={e => handleStatus(e.target.value)}
+            >
+              <option value='Draft'>Draft</option>
+              <option value='Committed'>Committed</option>
+              <option value='Complete'>Complete</option>
+              <option value='Delete'>Delete</option>
+            </select>
           )}
         </td>
+        <td style={{ ...tdS, fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>{fmtDate(po.order_date)}</td>
+        {/* ETA column — hidden on the Completed POs tab */}
+        {!isComplete && (
+          <td style={tdS} onClick={e => e.stopPropagation()}>
+            {isDraft ? (
+              <input key={po.eta || 'none'} type="date" defaultValue={po.eta || ''} onBlur={e => update('eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+            ) : (
+              <span style={{ fontSize: 11, color: '#444' }}>{fmtDate(po.eta) || '—'}</span>
+            )}
+          </td>
+        )}
         <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
         <td style={{ ...tdS, minWidth: 70, textAlign: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
@@ -356,18 +420,28 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
         <td style={{ ...tdS, minWidth: 190 }} onClick={e => e.stopPropagation()}>
           <PODocsCell poId={po.id} />
         </td>
-        <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
-          <div>
-            <div style={{ fontSize: 11 }}>{dateText}</div>
-            {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
-          </div>
-        </td>
+        {/* Last column: ETA in open view, Date Received + "Delivered" badge in completed view */}
+        {isComplete ? (
+          <td style={{ ...tdS, fontWeight: 700, minWidth: 130, background: '#EAF3DE', color: '#27500A', border: '1px solid #97C459' }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase' }}>Delivered</div>
+              <div style={{ fontSize: 11, marginTop: 2 }}>{receivedText}</div>
+            </div>
+          </td>
+        ) : (
+          <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
+            <div>
+              <div style={{ fontSize: 11 }}>{dateText}</div>
+              {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
+            </div>
+          </td>
+        )}
       </tr>
 
-      {/* Expanded containers panel */}
-      {expanded && (
+      {/* Expanded containers panel (only in views that allow expansion) */}
+      {expanded && allowContainerExpand && (
         <tr>
-          <td colSpan={13} style={{ padding: '12px 20px 16px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
+          <td colSpan={colSpanForExpansion} style={{ padding: '12px 20px 16px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#1F3864' }}>
                 Containers for PO #{safeStr(po.id)} — {safeStr(po.supplier)}
@@ -398,12 +472,16 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
 // AWDPOTable — shared expandable-row table, reusable across tabs.
 // tableIds filters which PO tables to include; destOptions sets the Dest
 // dropdown options; showCompleted flips the filter to only include Completed
-// POs (used by the Completed POs tab).
+// POs (used by the Completed POs tab) and rewrites the ETA/Date Received columns.
+// allowContainerExpand disables the expand-on-click behavior (used by the
+// Completed POs tab where Tony doesn't want to re-edit container info).
 export function AWDPOTable({
   pos, upsertPO, deletePO, entityFilter,
   tableIds = ['sg-awdfba', 'rt-awd'],
   destOptions = ['AWD', 'FBA', 'RT AWD'],
   showCompleted = false,
+  allowContainerExpand = true,
+  readOnlyStatus = false,
   showModal, closeModal,
   emptyMessage = 'No open POs.',
 }) {
@@ -412,6 +490,15 @@ export function AWDPOTable({
     .filter(p => !entityFilter || p.entity === entityFilter)
     .filter(p => showCompleted ? p.status === 'Complete' : p.status !== 'Complete')
     .sort((a, b) => {
+      if (showCompleted) {
+        // Most recent received-date first (falls back to eta / order_date).
+        const ad = a.received_date || a.eta || a.order_date || ''
+        const bd = b.received_date || b.eta || b.order_date || ''
+        if (!ad && !bd) return 0
+        if (!ad) return 1
+        if (!bd) return -1
+        return new Date(bd) - new Date(ad)
+      }
       if (!a.eta && !b.eta) return 0
       if (!a.eta) return 1
       if (!b.eta) return -1
@@ -420,27 +507,34 @@ export function AWDPOTable({
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
   const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 
+  // Column headers — ETA is hidden on the Completed tab. The last column is
+  // "Date Received" on the Completed tab and "Est. Receive Date" otherwise.
+  const headers = showCompleted
+    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','PO Value','Boxes','Containers','Docs','Date Received']
+    : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Docs','Est. Receive Date']
+  const colCount = headers.length
+
   return (
     <div style={{ overflowX: 'auto', border: '1px solid #ddd', borderRadius: 8 }}>
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead>
           <tr>
-            {['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Docs','Est. Receive Date'].map(h => (
-              <th key={h} style={thS}>{h}</th>
-            ))}
+            {headers.map(h => <th key={h} style={thS}>{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {awdPos.length === 0 && (
-            <tr><td colSpan={13} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>{emptyMessage}</td></tr>
+            <tr><td colSpan={colCount} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>{emptyMessage}</td></tr>
           )}
           {awdPos.map(p => (
             <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
-              destOptions={destOptions} showModal={showModal} closeModal={closeModal} />
+              destOptions={destOptions} showModal={showModal} closeModal={closeModal}
+              allowContainerExpand={allowContainerExpand}
+              readOnlyStatus={readOnlyStatus} />
           ))}
           {awdPos.length > 0 && (
             <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
-              <td colSpan={12} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
+              <td colSpan={colCount - 1} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
                 {awdPos.length} {labelForFooter}{totalVal ? `   |   Total: ${fmtMoney(totalVal)}` : ''}
               </td>
               <td />
@@ -452,35 +546,88 @@ export function AWDPOTable({
   )
 }
 
-export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
-  const [addRow, setAddRow] = useState({ supplier: '', id: '', status: 'Committed', dest: 'AWD', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
+// Shared add-PO row used by RT and SG tabs.
+// tableId is set by the caller (rt-bb, rt-awd, sg-bb, sg-awdfba) so the right
+// section gets the right PO.
+export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, suppliers, productOptions = [], upsertPO, label = 'Add a new PO' }) {
+  const [row, setRow] = useState({
+    supplier: '', id: '', status: 'Committed',
+    dest: defaultDest || (destOptions && destOptions[0]) || '',
+    order_date: '', eta: '', po_value: '', product_type: '',
+  })
 
+  const submit = () => {
+    if (!row.supplier || !row.id) return
+    upsertPO({
+      id: row.id,
+      supplier: row.supplier,
+      status: row.status,
+      dest: row.dest || defaultDest || '',
+      entity,
+      table_id: tableId,
+      order_date: row.order_date || null,
+      eta: row.eta || null,
+      po_value: row.po_value ? +row.po_value : null,
+      product_type: row.product_type || null,
+    })
+    setRow({
+      supplier: '', id: '', status: 'Committed',
+      dest: defaultDest || (destOptions && destOptions[0]) || '',
+      order_date: '', eta: '', po_value: '', product_type: '',
+    })
+  }
+
+  return (
+    <div style={{ marginTop: 10, border: '1px solid #ddd', borderRadius: 8, padding: '10px 12px', background: '#f8f8f6' }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>{label}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        <select style={addSelS} value={row.supplier} onChange={e => setRow(r => ({...r, supplier: e.target.value}))}>
+          <option value=''>Supplier</option>
+          {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <input style={addInpS} placeholder="PO #" value={row.id} onChange={e => setRow(r => ({...r, id: e.target.value}))} />
+        <select style={addSelS} value={row.dest} onChange={e => setRow(r => ({...r, dest: e.target.value}))}>
+          {destOptions.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+        {productOptions.length > 0 && (
+          <select style={addSelS} value={row.product_type} onChange={e => setRow(r => ({...r, product_type: e.target.value}))}>
+            <option value=''>Product</option>
+            {productOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        )}
+        <select style={addSelS} value={row.status} onChange={e => setRow(r => ({...r, status: e.target.value}))}>
+          <option>Draft</option>
+          <option>Committed</option>
+        </select>
+        <input type="date" style={addInpS} value={row.order_date} onChange={e => setRow(r => ({...r, order_date: e.target.value}))} />
+        <input type="date" style={addInpS} value={row.eta} onChange={e => setRow(r => ({...r, eta: e.target.value}))} />
+        <input type="number" style={{ ...addInpS, width: 100 }} placeholder="Value $" value={row.po_value} onChange={e => setRow(r => ({...r, po_value: e.target.value}))} />
+        <button
+          style={{ padding: '5px 14px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }}
+          onClick={submit}
+        >
+          + Add PO
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Default export: the AWD/FBA Receiving tab. Add-PO has been removed per
+// Tony's round-7 request — new AWD/FBA POs are now added from the SG and RT
+// tabs directly (using AddAWDPORow there).
+export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
   const awdPos = pos
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
     .filter(p => p.status !== 'Complete')
-
-  const suppliers = ['Dongyang Shanye Fishing', 'I-Lure', 'Sourcepro', 'WEIGHT CO', 'JXL', 'Weihai Huayue Sports', 'XINGTAI XIOU IMPORT', 'CNBM INTERNATIONAL']
-  const destOpts = ['AWD', 'FBA', 'RT AWD']
-
-  const submitAdd = () => {
-    if (!addRow.supplier || !addRow.id) return
-    upsertPO({
-      id: addRow.id, supplier: addRow.supplier, status: addRow.status,
-      dest: addRow.dest, entity: addRow.entity, table_id: addRow.entity === 'SG' ? 'sg-awdfba' : 'rt-awd',
-      order_date: addRow.order_date || null, eta: addRow.eta || null,
-      po_value: addRow.po_value ? +addRow.po_value : null,
-      product_type: addRow.product_type || null
-    })
-    setAddRow({ supplier: '', id: '', status: 'Committed', dest: 'AWD', entity: 'RT', order_date: '', eta: '', po_value: '', product_type: '' })
-  }
 
   return (
     <div>
       {/* Header */}
       <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Shipments</h2>
-          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All AWD and FBA inbound orders — click a row to manage containers. Each container can have its own tracking # and receive date; destination is set on the PO.</p>
+          <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Receiving</h2>
+          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
         </div>
         <div style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
           <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>
@@ -489,24 +636,8 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
       </div>
 
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
-        showModal={showModal} closeModal={closeModal} />
-
-      {/* Add row */}
-      <div style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 8, padding: '10px 12px', background: '#f8f8f6' }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>Add a new AWD/FBA PO</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          <select style={addSelS} value={addRow.supplier} onChange={e => setAddRow(r => ({...r, supplier: e.target.value}))}><option value=''>Supplier</option>{suppliers.map(s => <option key={s} value={s}>{s}</option>)}</select>
-          <input style={addInpS} placeholder="PO #" value={addRow.id} onChange={e => setAddRow(r => ({...r, id: e.target.value}))} />
-          <select style={addSelS} value={addRow.entity} onChange={e => setAddRow(r => ({...r, entity: e.target.value}))}><option value='RT'>RT</option><option value='SG'>SG</option></select>
-          <select style={addSelS} value={addRow.dest} onChange={e => setAddRow(r => ({...r, dest: e.target.value}))}>{destOpts.map(d => <option key={d} value={d}>{d}</option>)}</select>
-          <input style={addInpS} placeholder="Product" value={addRow.product_type} onChange={e => setAddRow(r => ({...r, product_type: e.target.value}))} />
-          <select style={addSelS} value={addRow.status} onChange={e => setAddRow(r => ({...r, status: e.target.value}))}><option>Draft</option><option>Committed</option></select>
-          <input type="date" style={addInpS} value={addRow.order_date} onChange={e => setAddRow(r => ({...r, order_date: e.target.value}))} />
-          <input type="date" style={addInpS} value={addRow.eta} onChange={e => setAddRow(r => ({...r, eta: e.target.value}))} />
-          <input type="number" style={{ ...addInpS, width: 100 }} placeholder="Value $" value={addRow.po_value} onChange={e => setAddRow(r => ({...r, po_value: e.target.value}))} />
-          <button style={{ padding: '5px 14px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }} onClick={submitAdd}>+ Add PO</button>
-        </div>
-      </div>
+        showModal={showModal} closeModal={closeModal}
+        readOnlyStatus={true} />
     </div>
   )
 }

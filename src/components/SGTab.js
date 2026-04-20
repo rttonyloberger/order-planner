@@ -1,7 +1,11 @@
 import React from 'react'
-import { SGS_COLORS, projectedOrders, shortMonth, TODAY } from '../constants'
+import { SGS_COLORS, SG_PRODUCTS, projectedOrders, shortMonth, TODAY } from '../constants'
 import OrderCalendar from './OrderCalendar'
-import { AWDPOTable } from './AWDTab'
+import { AWDPOTable, AddAWDPORow } from './AWDTab'
+
+// SG currently orders from a single overseas supplier. Keeping the list here
+// so both BB and AWD/FBA add-PO rows offer the same dropdown.
+const SG_SUPPLIERS = ['CNBM INTERNATIONAL']
 
 export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
   const products = sgConfig.map(c => ({
@@ -27,6 +31,16 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
         tableIds={['sg-bb']} destOptions={['BB']} entityFilter="SG" />
+      <AddAWDPORow
+        tableId="sg-bb"
+        entity="SG"
+        defaultDest="BB"
+        destOptions={['BB']}
+        suppliers={SG_SUPPLIERS}
+        productOptions={SG_PRODUCTS}
+        upsertPO={upsertPO}
+        label="Add a new SG BB PO"
+      />
 
       <div style={bigSecStyle}>SG AWD and FBA Open POs and Arrivals</div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
@@ -37,6 +51,16 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
         tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG" />
+      <AddAWDPORow
+        tableId="sg-awdfba"
+        entity="SG"
+        defaultDest="AWD"
+        destOptions={['AWD', 'FBA']}
+        suppliers={SG_SUPPLIERS}
+        productOptions={SG_PRODUCTS}
+        upsertPO={upsertPO}
+        label="Add a new SG AWD/FBA PO"
+      />
     </div>
   )
 }
