@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
+import PONotesCell from './PONotesCell'
 
 // Today's date as YYYY-MM-DD — used to default the Date Received popup.
 function todayIsoStr() {
@@ -128,12 +129,33 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     if (withTracking.length) setLastRefresh(new Date())
   }, [bbPos.map(p => p.id).join(',')])
 
-  const handleRefreshAll = async () => {
+  const handleRefreshAll = useCallback(async () => {
     setRefreshing(true)
     for (const po of bbPos.filter(p => p.tracking_number)) await loadOne(po)
     setLastRefresh(new Date())
     setRefreshing(false)
-  }
+  }, [bbPos, loadOne])
+
+  // Keep "in Nd" / ETA fresh: re-fetch tracking every 10 minutes while the
+  // tab is visible and whenever the window regains focus. daysUntil(p.eta)
+  // already recalculates relative to today on every render, so pairing that
+  // with periodic eta syncs from 17TRACK prevents the stale "in 17d" problem.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible' && bbPos.some(p => p.tracking_number)) {
+        handleRefreshAll()
+      }
+    }, 10 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [handleRefreshAll, bbPos])
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (bbPos.some(p => p.tracking_number)) handleRefreshAll()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [handleRefreshAll, bbPos])
 
   const update = (po, field, val) => upsertPO({ ...po, [field]: val || null })
 
@@ -202,7 +224,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Current Location','Tracking Status','Docs','FCL/LCL','Est. Receive Date'].map(h => (
+                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Tracking Status','Notes','Docs','FCL/LCL','Est. Receive Date'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -293,12 +315,6 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
                             : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-                        <td style={{ ...tdS, minWidth: 170, fontSize: 10 }}>
-                          {isLoading ? <span style={{ color: '#aaa' }}>…</span>
-                            : hasInfo && info.lastLocation
-                              ? <div><div style={{ fontWeight: 500, color: '#333' }}>📍 {safeStr(info.lastLocation)}</div>{info.lastEvent && <div style={{ color: '#777', marginTop: 2, fontSize: 9 }}>{safeStr(info.lastEvent)}</div>}</div>
-                              : <span style={{ color: '#ccc' }}>—</span>}
-                        </td>
                         <td style={{ ...tdS, minWidth: 140 }}>
                           {isLoading ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>Fetching…</span>
                             : hasInfo
@@ -321,6 +337,10 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                         {getDirectUrl(p.tracking_number) && <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 9, color: '#0C447C', marginTop: 3, textDecoration: 'underline' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>}
                                       </div>)
                                 : <span style={{ color: '#ccc' }}>—</span>}
+                        </td>
+                        {/* Notes (left of Docs) */}
+                        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }}>
+                          <PONotesCell po={p} upsertPO={upsertPO} />
                         </td>
                         {/* Docs */}
                         <td style={{ ...tdS, minWidth: 190, verticalAlign: 'top', padding: '8px' }}>

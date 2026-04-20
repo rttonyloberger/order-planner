@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
+import PONotesCell from './PONotesCell'
 
 function safeStr(val) {
   if (val == null) return ''
@@ -236,7 +237,7 @@ function DateReceivedForm({ dateRef, poId }) {
 //  - readOnlyStatus: when true, the status cell is shown as a badge instead of
 //    a dropdown (used on the AWD/FBA Receiving tab where status is managed
 //    from the originating RT / SG tabs).
-export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal, allowContainerExpand = true, readOnlyStatus = false }) {
+export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal, allowContainerExpand = true, readOnlyStatus = false, requireMultipleToExpand = false }) {
   const [expanded, setExpanded] = useState(false)
   const [containers, setContainers] = useState([])
   const [loadingContainers, setLoadingContainers] = useState(false)
@@ -333,13 +334,22 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
            : po.dest === 'FBA' ? { bg: '#EEEDFE', fc: '#3C3489' }
            : { bg: '#F1EFE8', fc: '#444441' }
 
-  const rowClickable = allowContainerExpand
+  // When requireMultipleToExpand is set (Completed tab), only rows with more
+  // than one actual container are clickable. Otherwise any row with container
+  // expand allowed is clickable (so the open views can still add the first
+  // container).
+  const rowClickable = allowContainerExpand && (!requireMultipleToExpand || containers.length > 1)
+
+  // Display count — if no real containers are saved, show as 1 container in
+  // the summary (per Tony: "for ones where we dont add containers, auto make
+  // it 1 container"). The dropdown is still gated on real container count.
+  const displayContainerCount = Math.max(containers.length, 1)
 
   // Column counts for the row layout:
   //   completed view: Supplier, PO #, Entity, Dest, Product, Status, Order Date, PO Value,
-  //                   Boxes, Containers, Docs, Date Received   (12 cols)
-  //   open view:      + ETA column                              (13 cols)
-  const colSpanForExpansion = isComplete && !allowContainerExpand ? 12 : 13
+  //                   Boxes, Containers, Notes, Docs, Date Received   (13 cols)
+  //   open view:      + ETA column                                     (14 cols)
+  const colSpanForExpansion = isComplete && !allowContainerExpand ? 13 : 14
 
   return (
     <>
@@ -414,8 +424,11 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
         </td>
         <td style={{ ...tdS, minWidth: 80, textAlign: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
-            {containers.length > 0 ? `${containers.length} container${containers.length > 1 ? 's' : ''}` : '—'}
+            {displayContainerCount} container{displayContainerCount > 1 ? 's' : ''}
           </span>
+        </td>
+        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }} onClick={e => e.stopPropagation()}>
+          <PONotesCell po={po} upsertPO={upsertPO} readOnly={isComplete} />
         </td>
         <td style={{ ...tdS, minWidth: 190 }} onClick={e => e.stopPropagation()}>
           <PODocsCell poId={po.id} />
@@ -482,6 +495,7 @@ export function AWDPOTable({
   showCompleted = false,
   allowContainerExpand = true,
   readOnlyStatus = false,
+  requireMultipleToExpand = false,
   showModal, closeModal,
   emptyMessage = 'No open POs.',
 }) {
@@ -510,8 +524,8 @@ export function AWDPOTable({
   // Column headers — ETA is hidden on the Completed tab. The last column is
   // "Date Received" on the Completed tab and "Est. Receive Date" otherwise.
   const headers = showCompleted
-    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','PO Value','Boxes','Containers','Docs','Date Received']
-    : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Docs','Est. Receive Date']
+    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','PO Value','Boxes','Containers','Notes','Docs','Date Received']
+    : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Notes','Docs','Est. Receive Date']
   const colCount = headers.length
 
   return (
@@ -530,7 +544,8 @@ export function AWDPOTable({
             <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
               destOptions={destOptions} showModal={showModal} closeModal={closeModal}
               allowContainerExpand={allowContainerExpand}
-              readOnlyStatus={readOnlyStatus} />
+              readOnlyStatus={readOnlyStatus}
+              requireMultipleToExpand={requireMultipleToExpand} />
           ))}
           {awdPos.length > 0 && (
             <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>

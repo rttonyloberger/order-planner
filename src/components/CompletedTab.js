@@ -18,10 +18,12 @@ export default function CompletedTab({ pos, upsertPO, deletePO, showModal, close
   const sgAwdCount = countCompleted(['sg-awdfba'], 'SG')
   const totalCount = rtBbCount + rtAwdCount + sgBbCount + sgAwdCount
 
-  // showCompleted flips the filter + column layout; allowContainerExpand={false}
-  // hides the container dropdown in the completed archive (per Tony's request —
-  // once a PO is done, we don't need to keep re-opening the container detail).
-  const commonProps = { pos, upsertPO, deletePO, showModal, closeModal, showCompleted: true, allowContainerExpand: false }
+  // showCompleted flips the filter + column layout.
+  // allowContainerExpand + requireMultipleToExpand: completed POs ARE
+  // expandable, but only when they actually have more than one container
+  // (Round 9 — single-container / zero-container completed POs stay flat,
+  //  so they just look like one line without the clickable dropdown).
+  const commonProps = { pos, upsertPO, deletePO, showModal, closeModal, showCompleted: true, allowContainerExpand: true, requireMultipleToExpand: true }
 
   return (
     <div>
