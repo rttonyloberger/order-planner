@@ -15,6 +15,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
 
   const rows = pos
     .filter(p => p.table_id === tableId)
+    .filter(p => p.status !== 'Complete')
     .sort((a, b) => {
       if (!a.eta && !b.eta) return 0
       if (!a.eta) return 1
@@ -61,14 +62,20 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
   }
 
   const handleStatus = (p, val) => {
-    if (val === 'Complete' || val === 'Delete') {
-      const isDel = val === 'Delete'
+    if (val === 'Delete') {
       showModal({
-        title: isDel ? 'Delete this PO?' : 'Mark as Complete?',
-        body: `PO #${p.id} will be ${isDel ? 'permanently deleted' : 'removed from the list'}.`,
-        confirmLabel: isDel ? 'Yes, delete' : 'Yes, mark complete',
-        danger: isDel,
+        title: 'Delete this PO?',
+        body: `PO #${p.id} will be permanently deleted.`,
+        confirmLabel: 'Yes, delete',
+        danger: true,
         onConfirm: () => { deletePO(p.id); closeModal() }
+      })
+    } else if (val === 'Complete') {
+      showModal({
+        title: 'Mark as Complete?',
+        body: `PO #${p.id} will move to the Completed POs tab.`,
+        confirmLabel: 'Yes, mark complete',
+        onConfirm: () => { update(p, 'status', 'Complete'); closeModal() }
       })
     } else {
       update(p, 'status', val)

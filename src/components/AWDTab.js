@@ -199,13 +199,42 @@ function ContainerRow({ container, onUpdate, onDelete }) {
 }
 
 // AWD PO Row — expandable with sub-containers. Exported so RT/SG tabs can reuse it.
-export function AWDPORow({ po, upsertPO }) {
+// isDraft gates all PO-level editing. Status dropdown always available.
+export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal }) {
   const [expanded, setExpanded] = useState(false)
   const [containers, setContainers] = useState([])
   const [loadingContainers, setLoadingContainers] = useState(false)
 
   const sc = SUPP_COLORS[po.supplier] || { bg: '#f5f5f5', fc: '#333', b: '#ccc' }
   const opts = po.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
+  const isDraft = (po.status || 'Draft') === 'Draft'
+
+  const statusColor = s => s === 'Committed' ? { bg: '#E6F1FB', fc: '#0C447C' }
+                         : s === 'Complete'  ? { bg: '#EAF3DE', fc: '#27500A' }
+                         : s === 'Delete'    ? { bg: '#FCEBEB', fc: '#A32D2D' }
+                         : { bg: '#FAEEDA', fc: '#633806' }
+  const sc2 = statusColor(po.status || 'Draft')
+
+  const handleStatus = (val) => {
+    if (val === 'Delete') {
+      showModal?.({
+        title: 'Delete this PO?',
+        body: `PO #${po.id} will be permanently deleted.`,
+        confirmLabel: 'Yes, delete',
+        danger: true,
+        onConfirm: () => { deletePO?.(po.id); closeModal?.() }
+      })
+    } else if (val === 'Complete') {
+      showModal?.({
+        title: 'Mark as Complete?',
+        body: `PO #${po.id} will move to the Completed POs tab.`,
+        confirmLabel: 'Yes, mark complete',
+        onConfirm: () => { upsertPO({ ...po, status: 'Complete' }); closeModal?.() }
+      })
+    } else {
+      upsertPO({ ...po, status: val })
+    }
+  }
 
   const loadContainers = useCallback(async () => {
     setLoadingContainers(true)
@@ -269,30 +298,49 @@ export function AWDPORow({ po, upsertPO }) {
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: po.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: po.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(po.entity)}</span>
         </td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
-          <select style={selS} value={po.dest || ''} onChange={e => update('dest', e.target.value)}>
-            <option value=''>--</option>
-            <option value='AWD'>AWD</option>
-            <option value='FBA'>FBA</option>
-            <option value='RT AWD'>RT AWD</option>
-          </select>
-          {po.dest && (
+          {isDraft ? (
+            <select style={selS} value={po.dest || ''} onChange={e => update('dest', e.target.value)}>
+              <option value=''>--</option>
+              {destOptions.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          ) : (
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: db.bg, color: db.fc }}>{po.dest || '—'}</span>
+          )}
+          {isDraft && po.dest && (
             <div style={{ marginTop: 3 }}>
               <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10, fontWeight: 600, background: db.bg, color: db.fc }}>{po.dest}</span>
             </div>
           )}
         </td>
         <td style={{ ...tdS, minWidth: 120 }} onClick={e => e.stopPropagation()}>
-          <select style={selS} value={po.product_type || ''} onChange={e => update('product_type', e.target.value)}>
-            <option value=''>--</option>
-            {opts.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          {isDraft ? (
+            <select style={selS} value={po.product_type || ''} onChange={e => update('product_type', e.target.value)}>
+              <option value=''>--</option>
+              {opts.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <span style={{ fontSize: 11, color: '#444' }}>{po.product_type || '—'}</span>
+          )}
         </td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
-          <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: po.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: po.status === 'Committed' ? '#0C447C' : '#633806' }}>{safeStr(po.status)}</span>
+          <select
+            style={{ ...selS, background: sc2.bg, color: sc2.fc, borderColor: sc2.fc + '44' }}
+            value={po.status || 'Draft'}
+            onChange={e => handleStatus(e.target.value)}
+          >
+            <option value='Draft'>Draft</option>
+            <option value='Committed'>Committed</option>
+            <option value='Complete'>Complete</option>
+            <option value='Delete'>Delete</option>
+          </select>
         </td>
         <td style={{ ...tdS, fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>{fmtDate(po.order_date)}</td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
-          <input type="date" defaultValue={po.eta || ''} onBlur={e => update('eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+          {isDraft ? (
+            <input key={po.eta || 'none'} type="date" defaultValue={po.eta || ''} onBlur={e => update('eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+          ) : (
+            <span style={{ fontSize: 11, color: '#444' }}>{fmtDate(po.eta) || '—'}</span>
+          )}
         </td>
         <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
         <td style={{ ...tdS, minWidth: 70, textAlign: 'center' }}>
@@ -348,11 +396,21 @@ export function AWDPORow({ po, upsertPO }) {
 }
 
 // AWDPOTable — shared expandable-row table, reusable across tabs.
-// Filters by table_id (not dest) so freeform FBA warehouse codes still show.
-export function AWDPOTable({ pos, upsertPO, entityFilter }) {
+// tableIds filters which PO tables to include; destOptions sets the Dest
+// dropdown options; showCompleted flips the filter to only include Completed
+// POs (used by the Completed POs tab).
+export function AWDPOTable({
+  pos, upsertPO, deletePO, entityFilter,
+  tableIds = ['sg-awdfba', 'rt-awd'],
+  destOptions = ['AWD', 'FBA', 'RT AWD'],
+  showCompleted = false,
+  showModal, closeModal,
+  emptyMessage = 'No open POs.',
+}) {
   const awdPos = pos
-    .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
+    .filter(p => tableIds.includes(p.table_id))
     .filter(p => !entityFilter || p.entity === entityFilter)
+    .filter(p => showCompleted ? p.status === 'Complete' : p.status !== 'Complete')
     .sort((a, b) => {
       if (!a.eta && !b.eta) return 0
       if (!a.eta) return 1
@@ -360,6 +418,7 @@ export function AWDPOTable({ pos, upsertPO, entityFilter }) {
       return new Date(a.eta) - new Date(b.eta)
     })
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
+  const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 
   return (
     <div style={{ overflowX: 'auto', border: '1px solid #ddd', borderRadius: 8 }}>
@@ -373,15 +432,16 @@ export function AWDPOTable({ pos, upsertPO, entityFilter }) {
         </thead>
         <tbody>
           {awdPos.length === 0 && (
-            <tr><td colSpan={13} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>No open AWD/FBA POs.</td></tr>
+            <tr><td colSpan={13} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>{emptyMessage}</td></tr>
           )}
           {awdPos.map(p => (
-            <AWDPORow key={p.id} po={p} upsertPO={upsertPO} />
+            <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
+              destOptions={destOptions} showModal={showModal} closeModal={closeModal} />
           ))}
           {awdPos.length > 0 && (
             <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
               <td colSpan={12} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
-                {awdPos.length} open POs{totalVal ? `   |   Total committed: ${fmtMoney(totalVal)}` : ''}
+                {awdPos.length} {labelForFooter}{totalVal ? `   |   Total: ${fmtMoney(totalVal)}` : ''}
               </td>
               <td />
             </tr>
@@ -397,6 +457,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
 
   const awdPos = pos
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
+    .filter(p => p.status !== 'Complete')
 
   const suppliers = ['Dongyang Shanye Fishing', 'I-Lure', 'Sourcepro', 'WEIGHT CO', 'JXL', 'Weihai Huayue Sports', 'XINGTAI XIOU IMPORT', 'CNBM INTERNATIONAL']
   const destOpts = ['AWD', 'FBA', 'RT AWD']
@@ -427,7 +488,8 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
         </div>
       </div>
 
-      <AWDPOTable pos={pos} upsertPO={upsertPO} />
+      <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
+        showModal={showModal} closeModal={closeModal} />
 
       {/* Add row */}
       <div style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 8, padding: '10px 12px', background: '#f8f8f6' }}>

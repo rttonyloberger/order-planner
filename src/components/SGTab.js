@@ -1,7 +1,6 @@
 import React from 'react'
 import { SGS_COLORS, projectedOrders, shortMonth, TODAY } from '../constants'
 import OrderCalendar from './OrderCalendar'
-import POTable from './POTable'
 import { AWDPOTable } from './AWDTab'
 
 export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
@@ -21,8 +20,13 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       <CombinedRow products={products} months={months} />
 
       <div style={bigSecStyle}>SG Big Bend (BB) Open POs and Arrivals</div>
-      <POTable tableId="sg-bb" pos={pos} isSG={true} showShip={true}
-        upsertPO={upsertPO} deletePO={deletePO} showModal={showModal} closeModal={closeModal} />
+      <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+        Click any row to expand and manage containers — each container can have its own tracking number, boxes and estimated receive date.
+      </p>
+      <ArrivalLegend />
+      <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
+        showModal={showModal} closeModal={closeModal}
+        tableIds={['sg-bb']} destOptions={['BB']} entityFilter="SG" />
 
       <div style={bigSecStyle}>SG AWD and FBA Open POs and Arrivals</div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
@@ -30,7 +34,9 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       </p>
       <ArrivalLegend />
       {/* Shared AWD/FBA table, filtered to SG entity */}
-      <AWDPOTable pos={pos} upsertPO={upsertPO} entityFilter="SG" />
+      <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
+        showModal={showModal} closeModal={closeModal}
+        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG" />
     </div>
   )
 }

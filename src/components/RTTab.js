@@ -29,7 +29,9 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       </p>
       <ArrivalLegend />
       {/* Same expandable row+containers table as SG / AWD/FBA tab, filtered to RT. */}
-      <AWDPOTable pos={pos} upsertPO={upsertPO} entityFilter="RT" />
+      <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
+        showModal={showModal} closeModal={closeModal}
+        tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT" />
     </div>
   )
 }
