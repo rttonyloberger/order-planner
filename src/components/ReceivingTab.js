@@ -549,7 +549,6 @@ function BBContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
       }).finally(() => { if (!cancelled) setLoading(false) })
     }
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [container.tracking_number])
 
   const handleTrackingBlur = async () => {

@@ -545,7 +545,6 @@ export function AWDPOTable({
     }
     loadAll()
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idKey])
 
   // Helper: earliest eta across containers (or fall back to PO's eta).
