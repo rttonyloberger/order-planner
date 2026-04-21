@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, TRACKING_STATUSES, detectCarrier, registerTracking, getTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
+import PONotesCell from './PONotesCell'
 
 // Pull a YYYY-MM-DD substring out of whatever 17TRACK gave us.
 function extractIsoDate(val) {
@@ -132,9 +133,9 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
 
   // Column count tracker so footer/add-row colspans line up correctly.
   // Fixed columns: Supplier, PO #, Status, Dest, Order Date, ETA, PO Value,
-  //                Tracking, Docs, Est. Receive Date  (10)
+  //                Tracking, Notes, Docs, Est. Receive Date  (11)
   // Optional:     + Product (if isSG), + FCL/LCL (if showShip)
-  const columnCount = 10 + (isSG ? 1 : 0) + (showShip ? 1 : 0)
+  const columnCount = 11 + (isSG ? 1 : 0) + (showShip ? 1 : 0)
 
   return (
     <div>
@@ -153,6 +154,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <th style={thS}>PO Value</th>
               <th style={{ ...thS, minWidth: 220 }}>Tracking</th>
               {showShip && <th style={thS}>FCL / LCL</th>}
+              <th style={{ ...thS, minWidth: 160 }}>Notes</th>
               <th style={{ ...thS, minWidth: 200 }}>Docs</th>
               <th style={thS}>Est. Receive Date</th>
             </tr>
@@ -231,6 +233,10 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
                       </div>
                     </td>
                   )}
+                  {/* Notes — free-form per-PO text. Same notes appear on BB Receiving. */}
+                  <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }}>
+                    <PONotesCell po={p} upsertPO={upsertPO} />
+                  </td>
                   {/* Docs — attach/preview docs tied to the PO (packing lists, invoices, etc). */}
                   <td style={{ ...tdS, minWidth: 200, verticalAlign: 'top', padding: '8px' }}>
                     <PODocsCell poId={p.id} />
@@ -262,6 +268,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <td style={tdS}><input type="number" style={{ ...addInpS, width: 88 }} placeholder="Value $" value={addRow.po_value} onChange={e => setAddRow(r => ({...r, po_value: e.target.value}))} /></td>
               <td style={tdS}><button style={{ padding: '5px 10px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }} onClick={submitAdd}>+ Add</button></td>
               {showShip && <td style={tdS} />}
+              <td style={tdS} />
               <td style={tdS} />
               <td style={tdS} />
             </tr>

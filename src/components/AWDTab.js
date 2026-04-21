@@ -237,9 +237,14 @@ function DateReceivedForm({ dateRef, poId }) {
 //  - readOnlyStatus: when true, the status cell is shown as a badge instead of
 //    a dropdown (used on the AWD/FBA Receiving tab where status is managed
 //    from the originating RT / SG tabs).
-export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal, allowContainerExpand = true, readOnlyStatus = false, requireMultipleToExpand = false }) {
+export function AWDPORow({
+  po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal,
+  allowContainerExpand = true, readOnlyStatus = false,
+  requireMultipleToExpand = false, showCompleted = false,
+  preloadedContainers,
+}) {
   const [expanded, setExpanded] = useState(false)
-  const [containers, setContainers] = useState([])
+  const [containers, setContainers] = useState(preloadedContainers || [])
   const [loadingContainers, setLoadingContainers] = useState(false)
 
   const sc = SUPP_COLORS[po.supplier] || { bg: '#f5f5f5', fc: '#333', b: '#ccc' }
@@ -287,10 +292,16 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
   }, [po.id])
 
   // Load containers on mount (not just on expand) so the summary row can
-  // show the box total and container count before the team clicks in.
+  // show the box total and container count before the team clicks in. If the
+  // parent table already pre-loaded containers, sync from that prop so we
+  // don't fire a redundant query.
   useEffect(() => {
-    loadContainers()
-  }, [loadContainers])
+    if (preloadedContainers !== undefined) {
+      setContainers(preloadedContainers)
+    } else {
+      loadContainers()
+    }
+  }, [loadContainers, preloadedContainers])
 
   // Earliest container ETA drives the summary row.
   const earliestContainerEta = containers.reduce((best, c) => {
@@ -346,10 +357,12 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
   const displayContainerCount = Math.max(containers.length, 1)
 
   // Column counts for the row layout:
-  //   completed view: Supplier, PO #, Entity, Dest, Product, Status, Order Date, PO Value,
-  //                   Boxes, Containers, Notes, Docs, Date Received   (13 cols)
-  //   open view:      + ETA column                                     (14 cols)
-  const colSpanForExpansion = isComplete && !allowContainerExpand ? 13 : 14
+  //   completed view: Supplier, PO #, Entity, Dest, Product, Status, Order Date,
+  //                   Boxes, Containers, Docs, Date Received          (11 cols)
+  //   open view:      Supplier, PO #, Entity, Dest, Product, Status, Order Date,
+  //                   ETA, PO Value, Boxes, Containers, Notes, Docs,
+  //                   Est. Receive Date                                (14 cols)
+  const colSpanForExpansion = isComplete ? 11 : 14
 
   return (
     <>
@@ -416,7 +429,10 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
             )}
           </td>
         )}
-        <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
+        {/* PO Value column — hidden on the Completed POs tab */}
+        {!isComplete && (
+          <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
+        )}
         <td style={{ ...tdS, minWidth: 70, textAlign: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
             {totalBoxes > 0 ? totalBoxes : (po.box_count || '—')}
@@ -427,9 +443,12 @@ export function AWDPORow({ po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 
             {displayContainerCount} container{displayContainerCount > 1 ? 's' : ''}
           </span>
         </td>
-        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }} onClick={e => e.stopPropagation()}>
-          <PONotesCell po={po} upsertPO={upsertPO} readOnly={isComplete} />
-        </td>
+        {/* Notes column — hidden on the Completed POs tab */}
+        {!isComplete && (
+          <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }} onClick={e => e.stopPropagation()}>
+            <PONotesCell po={po} upsertPO={upsertPO} readOnly={isComplete} />
+          </td>
+        )}
         <td style={{ ...tdS, minWidth: 190 }} onClick={e => e.stopPropagation()}>
           <PODocsCell poId={po.id} />
         </td>
@@ -499,10 +518,49 @@ export function AWDPOTable({
   showModal, closeModal,
   emptyMessage = 'No open POs.',
 }) {
-  const awdPos = pos
+  // Bulk-load every container for the POs this table renders. Lets us sort
+  // by the effective receive date (earliest container eta or fallback to the
+  // PO's eta) — which is what the AWD/FBA Receiving team actually cares about.
+  const [containerMap, setContainerMap] = useState({})
+
+  const tablePosAll = pos
     .filter(p => tableIds.includes(p.table_id))
     .filter(p => !entityFilter || p.entity === entityFilter)
     .filter(p => showCompleted ? p.status === 'Complete' : p.status !== 'Complete')
+  const idKey = tablePosAll.map(p => p.id).join(',')
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadAll() {
+      if (tablePosAll.length === 0) { setContainerMap({}); return }
+      const ids = tablePosAll.map(p => p.id)
+      const { data } = await supabase.from('awd_containers').select('*').in('po_id', ids).order('container_num')
+      if (cancelled) return
+      const byPO = {}
+      for (const c of (data || [])) {
+        if (!byPO[c.po_id]) byPO[c.po_id] = []
+        byPO[c.po_id].push(c)
+      }
+      setContainerMap(byPO)
+    }
+    loadAll()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idKey])
+
+  // Helper: earliest eta across containers (or fall back to PO's eta).
+  const effectiveEta = (p) => {
+    const cs = containerMap[p.id] || []
+    let best = null
+    for (const c of cs) {
+      if (!c.eta) continue
+      if (!best || new Date(c.eta) < new Date(best)) best = c.eta
+    }
+    return best || p.eta || null
+  }
+
+  const awdPos = tablePosAll
+    .slice()
     .sort((a, b) => {
       if (showCompleted) {
         // Most recent received-date first (falls back to eta / order_date).
@@ -513,18 +571,24 @@ export function AWDPOTable({
         if (!bd) return -1
         return new Date(bd) - new Date(ad)
       }
-      if (!a.eta && !b.eta) return 0
-      if (!a.eta) return 1
-      if (!b.eta) return -1
-      return new Date(a.eta) - new Date(b.eta)
+      // Open view: soonest effective receive date at the top. Updates
+      // automatically as container etas arrive from tracking.
+      const ae = effectiveEta(a)
+      const be = effectiveEta(b)
+      if (!ae && !be) return 0
+      if (!ae) return 1
+      if (!be) return -1
+      return new Date(ae) - new Date(be)
     })
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
   const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 
-  // Column headers — ETA is hidden on the Completed tab. The last column is
-  // "Date Received" on the Completed tab and "Est. Receive Date" otherwise.
+  // Column headers — PO Value and Notes are dropped on the Completed tab per
+  // Tony's round-10 request. ETA is also hidden on the Completed tab. The
+  // last column is "Date Received" on the Completed tab and "Est. Receive
+  // Date" otherwise.
   const headers = showCompleted
-    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','PO Value','Boxes','Containers','Notes','Docs','Date Received']
+    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','Boxes','Containers','Docs','Date Received']
     : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Notes','Docs','Est. Receive Date']
   const colCount = headers.length
 
@@ -545,12 +609,14 @@ export function AWDPOTable({
               destOptions={destOptions} showModal={showModal} closeModal={closeModal}
               allowContainerExpand={allowContainerExpand}
               readOnlyStatus={readOnlyStatus}
-              requireMultipleToExpand={requireMultipleToExpand} />
+              requireMultipleToExpand={requireMultipleToExpand}
+              showCompleted={showCompleted}
+              preloadedContainers={containerMap[p.id]} />
           ))}
           {awdPos.length > 0 && (
             <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
               <td colSpan={colCount - 1} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
-                {awdPos.length} {labelForFooter}{totalVal ? `   |   Total: ${fmtMoney(totalVal)}` : ''}
+                {awdPos.length} {labelForFooter}{(totalVal && !showCompleted) ? `   |   Total: ${fmtMoney(totalVal)}` : ''}
               </td>
               <td />
             </tr>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
@@ -183,6 +183,36 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     })
   }
 
+  // Per-container CRUD used by the BB expanded panel. All writes update the
+  // local containerMap so the row count / expanded sub-rows stay in sync
+  // without a full reload.
+  const addContainer = async (po) => {
+    const existing = containerMap[po.id] || []
+    const nextNum = existing.length > 0 ? Math.max(...existing.map(c => c.container_num)) + 1 : 1
+    const { data } = await supabase.from('awd_containers').insert({
+      po_id: po.id,
+      container_num: nextNum,
+      eta: po.eta || null,
+    }).select().single()
+    if (data) setContainerMap(prev => ({ ...prev, [po.id]: [...(prev[po.id] || []), data] }))
+  }
+
+  const updateContainer = async (poId, containerId, updates) => {
+    await supabase.from('awd_containers').update(updates).eq('id', containerId)
+    setContainerMap(prev => ({
+      ...prev,
+      [poId]: (prev[poId] || []).map(c => c.id === containerId ? { ...c, ...updates } : c)
+    }))
+  }
+
+  const deleteContainer = async (poId, containerId) => {
+    await supabase.from('awd_containers').delete().eq('id', containerId)
+    setContainerMap(prev => ({
+      ...prev,
+      [poId]: (prev[poId] || []).filter(c => c.id !== containerId)
+    }))
+  }
+
   const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
   const overdue = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d < 0 }).length
   const inTransit = Object.values(trackingInfo).filter(t => t?.statusCode === 'InTransit').length
@@ -240,11 +270,13 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   const hasInfo = info && !info.noData
                   const isDelivered = hasInfo && info.statusCode === 'Delivered'
                   const opts = p.entity === 'SG' ? SG_PRODUCTS : RT_PRODUCTS
-                  // Per-PO container info (pre-loaded in bulk). Only POs with
-                  // more than one container get the inline expand toggle —
-                  // single-container BB POs already show their info on the row.
+                  // Per-PO container info (pre-loaded in bulk). Containers live
+                  // in an expandable sub-panel. The ▶ N containers toggle only
+                  // appears when at least one container is saved; otherwise a
+                  // small "+ Split into containers" button lets the team add
+                  // the first one.
                   const containers = containerMap[p.id] || []
-                  const hasMultipleContainers = containers.length > 1
+                  const hasAnyContainers = containers.length >= 1
                   const isContainersExpanded = expandedContainersId === p.id
 
                   // Days away cell — show Delivered if delivered
@@ -275,13 +307,21 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                       <tr style={{ background: isDelivered ? '#F5FAF0' : sc.bg + '18', borderBottom: '1px solid #f0f0f0', opacity: isDelivered ? 0.85 : 1 }}>
                         <td style={{ ...tdS, fontWeight: 700, background: isDelivered ? '#EAF3DE' : sc.bg, color: isDelivered ? '#27500A' : sc.fc, borderLeft: `3px solid ${isDelivered ? '#639922' : sc.b}`, textAlign: 'left', minWidth: 140 }}>
                           <div>{safeStr(p.supplier)}</div>
-                          {hasMultipleContainers && (
+                          {hasAnyContainers ? (
                             <button
                               onClick={() => setExpandedContainersId(isContainersExpanded ? null : p.id)}
                               style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                              title="Show per-container tracking and ETAs"
+                              title="Show per-container tracking, notes, docs and ETAs"
                             >
-                              {isContainersExpanded ? '▼' : '▶'} {containers.length} containers
+                              {isContainersExpanded ? '▼' : '▶'} {containers.length} container{containers.length > 1 ? 's' : ''}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={async () => { await addContainer(p); setExpandedContainersId(p.id) }}
+                              style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#fff', color: '#1F3864', border: '1px dashed #1F3864', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                              title="Split this PO into multiple containers"
+                            >
+                              + Split into containers
                             </button>
                           )}
                         </td>
@@ -377,42 +417,42 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         </td>
                       </tr>
 
-                      {/* Per-container detail panel — only shown for multi-container POs */}
-                      {isContainersExpanded && hasMultipleContainers && (
+                      {/* Per-container detail panel — rich sub-rows per container */}
+                      {isContainersExpanded && hasAnyContainers && (
                         <tr>
-                          <td colSpan={16} style={{ padding: '12px 20px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: '#1F3864', marginBottom: 10 }}>
-                              Containers for PO #{safeStr(p.id)} — {safeStr(p.supplier)}
+                          <td colSpan={16} style={{ padding: '14px 20px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: '#1F3864' }}>
+                                Containers for PO #{safeStr(p.id)} — {safeStr(p.supplier)}
+                                <span style={{ fontWeight: 400, color: '#666', marginLeft: 8 }}>· each container is received individually</span>
+                              </div>
+                              <button
+                                onClick={() => addContainer(p)}
+                                style={{ fontSize: 11, padding: '5px 14px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
+                                + Add Container
+                              </button>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
-                              {containers.map(c => {
-                                const cDays = daysUntil(c.eta)
-                                const cColor = arrivalColor(cDays)
-                                const cEtaText = c.eta
-                                  ? (() => { const [y, m, d] = c.eta.split('-'); return `${parseInt(m)}/${parseInt(d)}/${y}` })()
-                                  : 'TBD'
-                                const cSub = cDays === null ? '' : cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`
-                                return (
-                                  <div key={c.id} style={{ background: '#fff', border: '1px solid #d0d7e2', borderRadius: 8, padding: '10px 12px' }}>
-                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 6 }}>
-                                      Container {c.container_num}
-                                      {c.dest && <span style={{ marginLeft: 8, fontSize: 9, padding: '1px 7px', borderRadius: 8, background: '#E6F1FB', color: '#0C447C', fontFamily: 'monospace' }}>{c.dest}</span>}
-                                    </div>
-                                    {c.tracking_number
-                                      ? <div style={{ fontSize: 10, color: '#444', marginBottom: 4, fontFamily: 'monospace' }}>📦 {c.tracking_number}</div>
-                                      : <div style={{ fontSize: 10, color: '#aaa', fontStyle: 'italic', marginBottom: 4 }}>No tracking # yet</div>}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                                      <span style={{ fontSize: 10, color: '#666' }}>Est. receive</span>
-                                      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 6, background: cColor.bg, color: cColor.fc, border: `1px solid ${cColor.border}` }}>
-                                        {cEtaText}{cSub ? ` · ${cSub}` : ''}
-                                      </span>
-                                    </div>
-                                    {c.box_count != null && c.box_count !== '' && (
-                                      <div style={{ fontSize: 10, color: '#777', marginTop: 4 }}>{c.box_count} boxes</div>
-                                    )}
-                                  </div>
-                                )
-                              })}
+                            <div style={{ background: '#fff', border: '1px solid #d0d7e2', borderRadius: 8, overflow: 'hidden' }}>
+                              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                                <thead>
+                                  <tr>
+                                    {['Container Name','Tracking #','Carrier','Last Update','Tracking Status','FCL/LCL','Notes','Docs','Est. Receive Date',''].map(h => (
+                                      <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {containers.map(c => (
+                                    <BBContainerSubRow
+                                      key={c.id}
+                                      container={c}
+                                      parentPo={p}
+                                      onUpdate={(updates) => updateContainer(p.id, c.id, updates)}
+                                      onDelete={() => deleteContainer(p.id, c.id)}
+                                    />
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
                           </td>
                         </tr>
@@ -475,6 +515,200 @@ function TrackingInput({ po, onSubmit, onRemove }) {
         <button onClick={onRemove} style={{ fontSize: 9, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 2 }}>remove</button>
       )}
     </div>
+  )
+}
+
+// BBContainerSubRow — one rich table row per container inside the BB expanded
+// panel. Behaves like a mini-PO: editable name, tracking number (with carrier
+// auto-detect), FCL/LCL + boxes, per-container notes, shared PO-level docs,
+// and its own est. receive date. Tracking writes back to the container's eta
+// the same way the main BB row does.
+function BBContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
+  const [val, setVal] = useState(container.tracking_number || '')
+  const [trackingInfo, setTrackingInfo] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  // Default display name: {po.id}-{container_num}
+  const defaultName = `${parentPo.id}-${container.container_num}`
+  const displayName = container.name || defaultName
+
+  useEffect(() => { setVal(container.tracking_number || '') }, [container.tracking_number])
+
+  // Fetch tracking on mount (and when tracking number changes). Mirror the
+  // eta-overwrite behavior of the main BB row.
+  useEffect(() => {
+    let cancelled = false
+    if (container.tracking_number && !isDirectOnly(container.tracking_number)) {
+      setLoading(true)
+      getTracking(container.tracking_number).then(info => {
+        if (cancelled) return
+        setTrackingInfo(info)
+        if (info) {
+          const iso = extractIsoDate(info.eta)
+          if (iso && iso !== container.eta) onUpdate({ eta: iso })
+        }
+      }).finally(() => { if (!cancelled) setLoading(false) })
+    }
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [container.tracking_number])
+
+  const handleTrackingBlur = async () => {
+    const trimmed = val.trim()
+    if (trimmed === (container.tracking_number || '')) return
+    const auto = detectCarrier(trimmed)
+    await onUpdate({ tracking_number: trimmed || null, carrier_slug: auto?.code || null })
+    if (trimmed) {
+      await registerTracking(trimmed)
+      setTimeout(async () => {
+        const info = await getTracking(trimmed)
+        setTrackingInfo(info)
+        if (info) {
+          const iso = extractIsoDate(info.eta)
+          if (iso) onUpdate({ eta: iso })
+        }
+      }, 2000)
+    }
+  }
+
+  const detected = detectCarrier(container.tracking_number || val || '')
+  const carrierName = trackingInfo?.resolvedCarrier || detected?.name
+
+  const cDays = daysUntil(container.eta)
+  const cColor = arrivalColor(cDays)
+  const cEtaText = container.eta
+    ? (() => { const [y, m, d] = container.eta.split('-'); return `${parseInt(m)}/${parseInt(d)}/${y}` })()
+    : 'TBD'
+  const cSub = cDays === null ? '' : cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`
+
+  const directUrl = container.tracking_number ? getDirectUrl(container.tracking_number) : null
+  const isDirect = container.tracking_number ? isDirectOnly(container.tracking_number) : false
+
+  // PONotesCell expects a { id, notes } shape; reuse it against the container.
+  const notesShim = { id: container.id, notes: container.notes }
+  const notesUpsert = (obj) => onUpdate({ notes: obj.notes ?? null })
+
+  return (
+    <tr style={{ borderBottom: '1px solid #eef2f6' }}>
+      {/* Name */}
+      <td style={{ ...tdS, textAlign: 'left', minWidth: 140, background: '#f7fafd' }}>
+        <input
+          type="text"
+          defaultValue={container.name || ''}
+          placeholder={defaultName}
+          onBlur={e => {
+            const v = e.target.value.trim()
+            if ((v || null) !== (container.name || null)) onUpdate({ name: v || null })
+          }}
+          style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #d0d7e2', borderRadius: 4, width: '100%', fontFamily: 'monospace', fontWeight: 600, color: '#1F3864', background: '#fff' }}
+          title={`Default: ${defaultName}`}
+        />
+        {!container.name && <div style={{ fontSize: 9, color: '#888', marginTop: 2 }}>default: {defaultName}</div>}
+      </td>
+
+      {/* Tracking # */}
+      <td style={{ ...tdS, minWidth: 160 }}>
+        <input
+          type="text"
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={handleTrackingBlur}
+          placeholder="Enter tracking #"
+          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
+        />
+      </td>
+
+      {/* Carrier */}
+      <td style={{ ...tdS, minWidth: 120, fontSize: 10 }}>
+        {carrierName
+          ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(carrierName)}</span>
+          : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* Last Update */}
+      <td style={{ ...tdS, minWidth: 110, fontSize: 10 }}>
+        {loading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
+          : trackingInfo?.lastTime ? <span style={{ color: '#444' }}>{fmtTrackDate(trackingInfo.lastTime)}</span>
+          : container.tracking_number ? <span style={{ color: '#bbb' }}>—</span>
+          : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* Tracking Status */}
+      <td style={{ ...tdS, minWidth: 130, fontSize: 10 }}>
+        {loading ? <span style={{ color: '#aaa' }}>…</span>
+          : trackingInfo
+            ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: trackingInfo.statusStyle?.bg || '#f5f5f5', color: trackingInfo.statusStyle?.color || '#888' }}>
+                {safeStr(trackingInfo.statusIcon)} {safeStr(trackingInfo.statusLabel)}
+              </span>
+            : isDirect && directUrl
+              ? <a href={directUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600 }}>Track →</a>
+              : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* FCL / LCL + boxes */}
+      <td style={{ ...tdS, minWidth: 130 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <select
+            style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
+            value={container.ship_mode || ''}
+            onChange={e => onUpdate({ ship_mode: e.target.value || null })}
+          >
+            <option value=''>--</option>
+            <option value='FCL'>FCL</option>
+            <option value='LCL'>LCL</option>
+          </select>
+          {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+          {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <input
+              type="number"
+              placeholder="#"
+              defaultValue={container.box_count || ''}
+              onBlur={e => {
+                const v = e.target.value ? parseInt(e.target.value) : null
+                onUpdate({ box_count: !isNaN(v) ? v : null })
+              }}
+              style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
+            />
+            <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+          </div>
+        </div>
+      </td>
+
+      {/* Notes (per container) */}
+      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '6px 8px' }}>
+        <PONotesCell po={notesShim} upsertPO={notesUpsert} />
+      </td>
+
+      {/* Docs — shared with the parent PO's doc bucket. Any container can
+          attach/see them, reflecting that docs like packing lists typically
+          cover the whole PO rather than a single container. */}
+      <td style={{ ...tdS, minWidth: 180, verticalAlign: 'top', padding: '6px 8px' }}>
+        <PODocsCell poId={parentPo.id} />
+      </td>
+
+      {/* Est. Receive Date */}
+      <td style={{ ...tdS, fontWeight: 700, minWidth: 120, background: cColor.bg, color: cColor.fc, border: `1px solid ${cColor.border}` }}>
+        <input
+          type="date"
+          key={container.eta || 'none'}
+          defaultValue={container.eta || ''}
+          onBlur={e => onUpdate({ eta: e.target.value || null })}
+          style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4, width: '100%', background: '#fff', color: '#333' }}
+        />
+        <div style={{ fontSize: 11, marginTop: 3, fontWeight: 600 }}>{cEtaText}</div>
+        {cSub && <div style={{ fontSize: 9, fontWeight: 400 }}>{cSub}</div>}
+      </td>
+
+      {/* Delete */}
+      <td style={{ ...tdS, minWidth: 36 }}>
+        <button
+          onClick={onDelete}
+          title="Remove container"
+          style={{ fontSize: 13, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}
+        >✕</button>
+      </td>
+    </tr>
   )
 }
 
