@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
 import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
@@ -530,7 +530,6 @@ function BBContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
 
   // Default display name: {po.id}-{container_num}
   const defaultName = `${parentPo.id}-${container.container_num}`
-  const displayName = container.name || defaultName
 
   useEffect(() => { setVal(container.tracking_number || '') }, [container.tracking_number])
 

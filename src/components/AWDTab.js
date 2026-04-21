@@ -240,7 +240,7 @@ function DateReceivedForm({ dateRef, poId }) {
 export function AWDPORow({
   po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal,
   allowContainerExpand = true, readOnlyStatus = false,
-  requireMultipleToExpand = false, showCompleted = false,
+  requireMultipleToExpand = false,
   preloadedContainers,
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -610,7 +610,6 @@ export function AWDPOTable({
               allowContainerExpand={allowContainerExpand}
               readOnlyStatus={readOnlyStatus}
               requireMultipleToExpand={requireMultipleToExpand}
-              showCompleted={showCompleted}
               preloadedContainers={containerMap[p.id]} />
           ))}
           {awdPos.length > 0 && (
