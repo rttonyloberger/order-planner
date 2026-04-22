@@ -58,152 +58,212 @@ export function receiveDateDisplay(etaIso) {
   return { dateText, subText }
 }
 
-// ContainerRow — one tracking entry per container within an AWD PO.
-// Containers inherit the PO's destination (no more per-container dest dropdown).
-// The receive-date input is writable, but tracking results will always
-// overwrite it whenever 17TRACK returns an ETA.
-function ContainerRow({ container, onUpdate, onDelete }) {
+// AWDContainerSubRow — rich per-container table row inside the AWD/FBA
+// expanded panel. Mirrors BBContainerSubRow from ReceivingTab.js (editable
+// name, tracking # with auto-carrier detect, last-update / tracking status
+// pills, FCL/LCL + boxes, per-container notes, shared PO-level docs, est.
+// receive date that auto-updates from tracking) and adds a Dest column so
+// AWD/FBA containers can each ship to a different warehouse code (FTW1,
+// ONT8, LGB8, etc.) within a single PO.
+//
+// onUpdate takes just { ...updates }; the caller wraps in c.id to match
+// BBContainerSubRow's signature.
+function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
+  const [val, setVal] = useState(container.tracking_number || '')
   const [trackingInfo, setTrackingInfo] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [val, setVal] = useState(container.tracking_number || '')
 
-  // Sync tracking → container.eta
-  const syncEtaFromTracking = useCallback((info) => {
-    const iso = extractIsoDate(info?.eta)
-    if (iso && iso !== container.eta) {
-      onUpdate(container.id, { eta: iso })
-    }
-  }, [container.id, container.eta, onUpdate])
+  // Default display name: {po.id}-{container_num}
+  const defaultName = `${parentPo.id}-${container.container_num}`
 
+  useEffect(() => { setVal(container.tracking_number || '') }, [container.tracking_number])
+
+  // Fetch tracking on mount / whenever tracking number changes. Overwrites
+  // container.eta if the carrier returns an ETA (same as BB).
   useEffect(() => {
+    let cancelled = false
     if (container.tracking_number && !isDirectOnly(container.tracking_number)) {
       setLoading(true)
-      getTracking(container.tracking_number)
-        .then(info => {
-          setTrackingInfo(info)
-          if (info) syncEtaFromTracking(info)
-        })
-        .finally(() => setLoading(false))
+      getTracking(container.tracking_number).then(info => {
+        if (cancelled) return
+        setTrackingInfo(info)
+        if (info) {
+          const iso = extractIsoDate(info.eta)
+          if (iso && iso !== container.eta) onUpdate({ eta: iso })
+        }
+      }).finally(() => { if (!cancelled) setLoading(false) })
     }
-  }, [container.tracking_number, syncEtaFromTracking])
+    return () => { cancelled = true }
+  }, [container.tracking_number])
 
-  const handleBlur = async () => {
+  const handleTrackingBlur = async () => {
     const trimmed = val.trim()
-    if (trimmed === container.tracking_number) return
-    await onUpdate(container.id, { tracking_number: trimmed || null })
+    if (trimmed === (container.tracking_number || '')) return
+    const auto = detectCarrier(trimmed)
+    await onUpdate({ tracking_number: trimmed || null, carrier_slug: auto?.code || null })
     if (trimmed) {
       await registerTracking(trimmed)
       setTimeout(async () => {
         const info = await getTracking(trimmed)
         setTrackingInfo(info)
-        if (info) syncEtaFromTracking(info)
+        if (info) {
+          const iso = extractIsoDate(info.eta)
+          if (iso) onUpdate({ eta: iso })
+        }
       }, 2000)
     }
   }
 
-  const detected = detectCarrier(val || container.tracking_number || '')
+  const detected = detectCarrier(container.tracking_number || val || '')
+  const carrierName = trackingInfo?.resolvedCarrier || detected?.name
+
+  const cDays = daysUntil(container.eta)
+  const cColor = arrivalColor(cDays)
+  const cEtaText = container.eta
+    ? (() => { const [y, m, d] = container.eta.split('-'); return `${parseInt(m)}/${parseInt(d)}/${y}` })()
+    : 'TBD'
+  const cSub = cDays === null ? '' : cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`
+
   const directUrl = container.tracking_number ? getDirectUrl(container.tracking_number) : null
   const isDirect = container.tracking_number ? isDirectOnly(container.tracking_number) : false
 
-  const { dateText, subText } = receiveDateDisplay(container.eta)
-  const rc = arrivalColor(daysUntil(container.eta))
+  // PONotesCell expects a { id, notes } shape; reuse it against the container.
+  const notesShim = { id: container.id, notes: container.notes }
+  const notesUpsert = (obj) => onUpdate({ notes: obj.notes ?? null })
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', borderBottom: '1px dashed #e0e0e0', flexWrap: 'wrap' }}>
-      <span style={{ fontSize: 10, color: '#888', minWidth: 60, paddingTop: 4 }}>Container {container.container_num}</span>
+    <tr style={{ borderBottom: '1px solid #eef2f6' }}>
+      {/* Name */}
+      <td style={{ ...tdS, textAlign: 'left', minWidth: 140, background: '#f7fafd' }}>
+        <input
+          type="text"
+          defaultValue={container.name || ''}
+          placeholder={defaultName}
+          onBlur={e => {
+            const v = e.target.value.trim()
+            if ((v || null) !== (container.name || null)) onUpdate({ name: v || null })
+          }}
+          style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #d0d7e2', borderRadius: 4, width: '100%', fontFamily: 'monospace', fontWeight: 600, color: '#1F3864', background: '#fff' }}
+          title={`Default: ${defaultName}`}
+        />
+        {!container.name && <div style={{ fontSize: 9, color: '#888', marginTop: 2 }}>default: {defaultName}</div>}
+      </td>
 
-      {/* Tracking input */}
-      <div style={{ flex: 1, minWidth: 160 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Tracking #</div>
+      {/* Tracking # */}
+      <td style={{ ...tdS, minWidth: 160 }}>
         <input
           type="text"
           value={val}
           onChange={e => setVal(e.target.value)}
-          onBlur={handleBlur}
+          onBlur={handleTrackingBlur}
           placeholder="Enter tracking #"
           style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
         />
-        {detected && !container.tracking_number && (
-          <div style={{ fontSize: 9, color: '#27500A', background: '#EAF3DE', padding: '2px 5px', borderRadius: 3, marginTop: 2 }}>✓ {detected.name}</div>
-        )}
-      </div>
+      </td>
 
-      {/* Per-container Dest — short warehouse code (e.g. FTW1, ONT8). */}
-      <div style={{ minWidth: 80 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Dest</div>
+      {/* Carrier */}
+      <td style={{ ...tdS, minWidth: 120, fontSize: 10 }}>
+        {carrierName
+          ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(carrierName)}</span>
+          : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* Last Update */}
+      <td style={{ ...tdS, minWidth: 110, fontSize: 10 }}>
+        {loading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
+          : trackingInfo?.lastTime ? <span style={{ color: '#444' }}>{fmtTrackDate(trackingInfo.lastTime)}</span>
+          : container.tracking_number ? <span style={{ color: '#bbb' }}>—</span>
+          : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* Tracking Status */}
+      <td style={{ ...tdS, minWidth: 130, fontSize: 10 }}>
+        {loading ? <span style={{ color: '#aaa' }}>…</span>
+          : trackingInfo
+            ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: trackingInfo.statusStyle?.bg || '#f5f5f5', color: trackingInfo.statusStyle?.color || '#888' }}>
+                {safeStr(trackingInfo.statusIcon)} {safeStr(trackingInfo.statusLabel)}
+              </span>
+            : isDirect && directUrl
+              ? <a href={directUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600 }}>Track →</a>
+              : <span style={{ color: '#ccc' }}>—</span>}
+      </td>
+
+      {/* Dest — AWD-specific, short warehouse code (e.g. FTW1, ONT8, LGB8) */}
+      <td style={{ ...tdS, minWidth: 80 }}>
         <input
           type="text"
           defaultValue={container.dest || ''}
           placeholder="e.g. FTW1"
           maxLength={8}
-          onBlur={e => onUpdate(container.id, { dest: e.target.value.trim().toUpperCase() || null })}
+          onBlur={e => onUpdate({ dest: e.target.value.trim().toUpperCase() || null })}
           style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace', textTransform: 'uppercase', textAlign: 'center' }}
         />
-      </div>
+      </td>
 
-      {/* Boxes per container */}
-      <div style={{ minWidth: 70 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Boxes</div>
-        <input
-          type="number"
-          defaultValue={container.box_count || ''}
-          placeholder="#"
-          onBlur={e => {
-            const v = e.target.value ? parseInt(e.target.value) : null
-            onUpdate(container.id, { box_count: !isNaN(v) ? v : null })
-          }}
-          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%' }}
-        />
-      </div>
+      {/* FCL / LCL + boxes */}
+      <td style={{ ...tdS, minWidth: 130 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <select
+            style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
+            value={container.ship_mode || ''}
+            onChange={e => onUpdate({ ship_mode: e.target.value || null })}
+          >
+            <option value=''>--</option>
+            <option value='FCL'>FCL</option>
+            <option value='LCL'>LCL</option>
+          </select>
+          {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+          {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <input
+              type="number"
+              placeholder="#"
+              defaultValue={container.box_count || ''}
+              onBlur={e => {
+                const v = e.target.value ? parseInt(e.target.value) : null
+                onUpdate({ box_count: !isNaN(v) ? v : null })
+              }}
+              style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
+            />
+            <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+          </div>
+        </div>
+      </td>
 
-      {/* Est. Receive Date — auto-updates from tracking, but editable if tracking has no ETA yet. */}
-      <div style={{ minWidth: 130 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Est. Receive</div>
+      {/* Notes (per container) */}
+      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '6px 8px' }}>
+        <PONotesCell po={notesShim} upsertPO={notesUpsert} />
+      </td>
+
+      {/* Docs — shared with the parent PO's doc bucket. Any container can
+          attach/see them, reflecting that docs like packing lists typically
+          cover the whole PO rather than a single container. */}
+      <td style={{ ...tdS, minWidth: 180, verticalAlign: 'top', padding: '6px 8px' }}>
+        <PODocsCell poId={parentPo.id} />
+      </td>
+
+      {/* Est. Receive Date */}
+      <td style={{ ...tdS, fontWeight: 700, minWidth: 120, background: cColor.bg, color: cColor.fc, border: `1px solid ${cColor.border}` }}>
         <input
           type="date"
           key={container.eta || 'none'}
           defaultValue={container.eta || ''}
-          onBlur={e => onUpdate(container.id, { eta: e.target.value || null })}
-          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%' }}
+          onBlur={e => onUpdate({ eta: e.target.value || null })}
+          style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4, width: '100%', background: '#fff', color: '#333' }}
         />
-        {container.eta && (
-          <div style={{ fontSize: 9, marginTop: 2, padding: '2px 5px', borderRadius: 3, background: rc.bg, color: rc.fc, textAlign: 'center' }}>
-            {dateText}{subText ? ` (${subText})` : ''}
-          </div>
-        )}
-        {trackingInfo?.eta && (
-          <div style={{ fontSize: 8, color: '#27500A', marginTop: 1, textAlign: 'center' }}>📡 from tracking</div>
-        )}
-      </div>
+        <div style={{ fontSize: 11, marginTop: 3, fontWeight: 600 }}>{cEtaText}</div>
+        {cSub && <div style={{ fontSize: 9, fontWeight: 400 }}>{cSub}</div>}
+      </td>
 
-      {/* Status */}
-      <div style={{ minWidth: 140, fontSize: 10 }}>
-        <div style={{ fontSize: 9, color: '#888', marginBottom: 2 }}>Status</div>
-        {loading && <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>}
-        {isDirect && directUrl && (
-          <a href={directUrl} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 10, padding: '2px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600 }}>
-            Track on {detected?.name} →
-          </a>
-        )}
-        {!isDirect && trackingInfo && (
-          <div>
-            <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600, background: trackingInfo.statusStyle?.bg || '#f5f5f5', color: trackingInfo.statusStyle?.color || '#888' }}>
-              {safeStr(trackingInfo.statusIcon)} {safeStr(trackingInfo.statusLabel)}
-            </span>
-            {trackingInfo.lastTime && <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>{fmtTrackDate(trackingInfo.lastTime)}</div>}
-            {trackingInfo.lastLocation && <div style={{ fontSize: 9, color: '#555' }}>📍 {safeStr(trackingInfo.lastLocation)}</div>}
-          </div>
-        )}
-        {!isDirect && !trackingInfo && !loading && container.tracking_number && (
-          <span style={{ fontSize: 9, color: '#aaa', fontStyle: 'italic' }}>No status yet</span>
-        )}
-      </div>
-
-      {/* Delete container */}
-      <button onClick={() => onDelete(container.id)}
-        style={{ fontSize: 10, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, alignSelf: 'center' }}>✕</button>
-    </div>
+      {/* Delete */}
+      <td style={{ ...tdS, minWidth: 36 }}>
+        <button
+          onClick={onDelete}
+          title="Remove container"
+          style={{ fontSize: 13, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}
+        >✕</button>
+      </td>
+    </tr>
   )
 }
 
@@ -369,7 +429,26 @@ export function AWDPORow({
       <tr style={{ background: sc.bg + '18', borderBottom: expanded ? 'none' : '1px solid #f0f0f0', cursor: rowClickable ? 'pointer' : 'default' }}
         onClick={rowClickable ? () => setExpanded(e => !e) : undefined}>
         <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>
-          {rowClickable && <span style={{ marginRight: 6, fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>}{safeStr(po.supplier)}
+          <div>{safeStr(po.supplier)}</div>
+          {allowContainerExpand && (
+            containers.length > 0 ? (
+              <button
+                onClick={e => { e.stopPropagation(); setExpanded(exp => !exp) }}
+                style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title="Show per-container tracking, notes, docs and receive dates"
+              >
+                {expanded ? '▼' : '▶'} {containers.length} container{containers.length > 1 ? 's' : ''}
+              </button>
+            ) : (
+              <button
+                onClick={async (e) => { e.stopPropagation(); await addContainer(); setExpanded(true) }}
+                style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#fff', color: '#1F3864', border: '1px dashed #1F3864', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title="Split this PO into multiple containers"
+              >
+                + Split into containers
+              </button>
+            )
+          )}
         </td>
         <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>#{safeStr(po.id)}</td>
         <td style={tdS} onClick={e => e.stopPropagation()}>
@@ -487,13 +566,33 @@ export function AWDPORow({
             {loadingContainers && <div style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>Loading…</div>}
             {!loadingContainers && containers.length === 0 && (
               <div style={{ color: '#aaa', fontSize: 11, fontStyle: 'italic', padding: '8px 0' }}>
-                No containers yet — click "+ Add Container" to start adding tracking numbers, boxes and per-container receive dates
+                No containers yet — click "+ Add Container" above (or "+ Split into containers" on the row) to start adding tracking numbers, dests, boxes and per-container receive dates
               </div>
             )}
-            {containers.map(c => (
-              <ContainerRow key={c.id} container={c}
-                onUpdate={updateContainer} onDelete={deleteContainer} />
-            ))}
+            {containers.length > 0 && (
+              <div style={{ background: '#fff', border: '1px solid #d0d7e2', borderRadius: 8, overflow: 'hidden' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead>
+                    <tr>
+                      {['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest','FCL/LCL','Notes','Docs','Est. Receive Date',''].map(h => (
+                        <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {containers.map(c => (
+                      <AWDContainerSubRow
+                        key={c.id}
+                        container={c}
+                        parentPo={po}
+                        onUpdate={(updates) => updateContainer(c.id, updates)}
+                        onDelete={() => deleteContainer(c.id)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </td>
         </tr>
       )}
