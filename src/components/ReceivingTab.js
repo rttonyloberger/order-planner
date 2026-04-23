@@ -320,7 +320,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Tracking Status','Notes','Docs','FCL/LCL','Est. Receive Date'].map(h => (
+                  {['Supplier','PO #','Entity','Product','PO Status','Order Date','ETA','PO Value','Carrier','Tracking #','Last Update','Tracking Status','FCL/LCL','Notes','Docs','Est. Receive Date'].map(h => (
                     <th key={h} style={thS}>{h}</th>
                   ))}
                 </tr>
@@ -355,8 +355,6 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                     const det = detectCarrier(c.tracking_number)
                     return det?.name
                   }).filter(Boolean))]
-                  const totalContainerBoxes = containers.reduce((s, c) => s + (c.box_count || 0), 0)
-                  const containerShipModes = [...new Set(containers.map(c => c.ship_mode).filter(Boolean))]
                   // effectiveEta / effectiveDays drive the PO-row styling
                   // (delivered banner, days-away tint) when there are no
                   // containers. When containers exist the Est. Receive
@@ -448,20 +446,24 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               : (() => { const det = detectCarrier(p.tracking_number); return det ? <span style={{ background: '#f0f0f0', color: '#555', padding: '2px 7px', borderRadius: 8 }}>{safeStr(det.name)}</span> : <span style={{ color: '#ccc' }}>—</span> })()
                           }
                         </td>
-                        {/* Tracking # — when containers exist, show a
-                            compact list of each container's tracking number
-                            so the team can see at a glance that tracking is
-                            filled in even when the drop-down is collapsed.
-                            Tracking numbers are still edited inside each
-                            container row in the expanded panel. */}
-                        <td style={{ ...tdS, minWidth: 170 }}>
+                        {/* Tracking # — when containers exist, list each
+                            container's tracking number on its own row. This
+                            is the ONLY place the per-container label (e.g.
+                            "102581-1") is shown; Last Update and Tracking
+                            Status intentionally line up visually beside
+                            this column and do not repeat the label.
+                            Per-row vertical rhythm (minHeight + dashed
+                            separator) matches the two cells to its right
+                            so the team can read across a single container's
+                            values on one line. */}
+                        <td style={{ ...tdS, minWidth: 170, verticalAlign: 'top', padding: '4px 8px' }}>
                           {hasAnyContainers
-                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
                                 {containers.map((c, idx) => {
                                   const label = c.name || `${p.id}-${c.container_num}`
                                   return (
-                                    <div key={c.id} style={{ padding: '2px 0', fontSize: 10, display: 'flex', alignItems: 'baseline', gap: 4, borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', paddingTop: idx === 0 ? 2 : 8 }}>
-                                      <span style={{ color: '#888', fontSize: 9, minWidth: 64, flexShrink: 0 }}>{label}:</span>
+                                    <div key={c.id} style={{ padding: idx === 0 ? '3px 0' : '8px 0 3px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', minHeight: 24, display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+                                      <span style={{ color: '#888', fontSize: 9, minWidth: 56, flexShrink: 0 }}>{label}:</span>
                                       {c.tracking_number
                                         ? <span style={{ fontFamily: 'monospace', color: '#444' }}>{safeStr(c.tracking_number)}</span>
                                         : <span style={{ color: '#bbb', fontStyle: 'italic' }}>—</span>}
@@ -472,22 +474,18 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             : <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n }) }} />
                           }
                         </td>
-                        {/* Last Update — when the PO has containers, list
-                            each container's most recent tracking update
-                            on its own line so the team can tell at a glance
-                            which container is current and which is stale.
-                            Falls back to PO-level tracking when there are
-                            no containers. */}
-                        <td style={{ ...tdS, minWidth: 130, fontSize: 10, verticalAlign: 'top' }}>
+                        {/* Last Update — per-container. No label here (the
+                            label lives in the Tracking # column to the
+                            left); slot height + dashed divider match so
+                            rows read left-to-right for each container. */}
+                        <td style={{ ...tdS, minWidth: 110, fontSize: 10, verticalAlign: 'top', padding: '4px 8px' }}>
                           {hasAnyContainers
-                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
                                 {containers.map((c, idx) => {
-                                  const label = c.name || `${p.id}-${c.container_num}`
                                   const cInfo = containerTrackingInfo[c.id]
                                   const cLoading = containerLoadingIds.has(c.id)
                                   return (
-                                    <div key={c.id} style={{ padding: '2px 0', fontSize: 10, display: 'flex', flexDirection: 'column', gap: 2, borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', paddingTop: idx === 0 ? 2 : 8 }}>
-                                      <span style={{ color: '#888', fontSize: 9 }}>{label}:</span>
+                                    <div key={c.id} style={{ padding: idx === 0 ? '3px 0' : '8px 0 3px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', minHeight: 24, display: 'flex', alignItems: 'center', fontSize: 10 }}>
                                       {cLoading && (!cInfo || !cInfo.lastTime)
                                         ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
                                         : cInfo && cInfo.lastTime
@@ -502,30 +500,27 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
                               : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-                        {/* Tracking Status — when the PO has containers,
-                            show each container's individual status pill so
-                            the team sees per-container progress at a glance.
-                            Falls back to PO-level tracking when there are
-                            no containers. */}
-                        <td style={{ ...tdS, minWidth: 150, verticalAlign: 'top' }}>
+                        {/* Tracking Status — per-container. No label here
+                            (the label lives in the Tracking # column);
+                            slot rhythm matches Last Update and Tracking #
+                            so the row reads left-to-right. */}
+                        <td style={{ ...tdS, minWidth: 140, verticalAlign: 'top', padding: '4px 8px' }}>
                           {hasAnyContainers
-                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
                                 {containers.map((c, idx) => {
-                                  const label = c.name || `${p.id}-${c.container_num}`
                                   const cInfo = containerTrackingInfo[c.id]
                                   const cLoading = containerLoadingIds.has(c.id)
                                   return (
-                                    <div key={c.id} style={{ padding: '2px 0', fontSize: 10, display: 'flex', flexDirection: 'column', gap: 2, borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', paddingTop: idx === 0 ? 2 : 8 }}>
-                                      <span style={{ color: '#888', fontSize: 9 }}>{label}:</span>
+                                    <div key={c.id} style={{ padding: idx === 0 ? '3px 0' : '8px 0 3px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', minHeight: 24, display: 'flex', alignItems: 'center', fontSize: 10 }}>
                                       {cLoading && (!cInfo || !cInfo.statusCode)
                                         ? <span style={{ color: '#888', fontStyle: 'italic' }}>Fetching…</span>
                                         : cInfo && !cInfo.noData && cInfo.statusCode
-                                          ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: cInfo.statusStyle?.bg || '#f5f5f5', color: cInfo.statusStyle?.color || '#888', alignSelf: 'flex-start' }}>
+                                          ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: cInfo.statusStyle?.bg || '#f5f5f5', color: cInfo.statusStyle?.color || '#888' }}>
                                               {safeStr(cInfo.statusIcon)} {safeStr(cInfo.statusLabel)}
                                             </span>
                                           : c.tracking_number
                                             ? (isDirectOnly(c.tracking_number)
-                                                ? <a href={getDirectUrl(c.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600, alignSelf: 'flex-start' }}>Track on {detectCarrier(c.tracking_number)?.name} →</a>
+                                                ? <a href={getDirectUrl(c.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600 }}>Track on {detectCarrier(c.tracking_number)?.name} →</a>
                                                 : <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>)
                                             : <span style={{ color: '#ccc' }}>—</span>}
                                     </div>
@@ -554,32 +549,29 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                         </div>)
                                   : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
-                        {/* Notes (left of Docs) */}
-                        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }}>
-                          <PONotesCell po={p} upsertPO={upsertPO} />
-                        </td>
-                        {/* Docs */}
-                        <td style={{ ...tdS, minWidth: 190, verticalAlign: 'top', padding: '8px' }}>
-                          <PODocsCell poId={p.id} />
-                        </td>
-                        {/* FCL/LCL + boxes — when containers exist, show
-                            aggregated mode pills + total box count across
-                            all containers. Otherwise fall back to the
-                            PO-level editable controls. */}
-                        <td style={{ ...tdS, minWidth: 120 }}>
+                        {/* FCL/LCL + boxes — per-container. Each container
+                            has its own ship mode & box count, so we split
+                            them onto their own lines that line up with the
+                            Tracking # / Last Update / Tracking Status rows
+                            above. Falls back to PO-level editable controls
+                            when there are no containers. */}
+                        <td style={{ ...tdS, minWidth: 120, verticalAlign: 'top', padding: '4px 8px' }}>
                           {hasAnyContainers
-                            ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                                {containerShipModes.length === 0 && <span style={{ color: '#ccc', fontSize: 10 }}>—</span>}
-                                {containerShipModes.map(m => (
-                                  <span key={m} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
-                                    background: m === 'FCL' ? '#E6F1FB' : '#EEEDFE',
-                                    color: m === 'FCL' ? '#0C447C' : '#3C3489' }}>
-                                    {m}
-                                  </span>
+                            ? <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
+                                {containers.map((c, idx) => (
+                                  <div key={c.id} style={{ padding: idx === 0 ? '3px 0' : '8px 0 3px 0', borderTop: idx === 0 ? 'none' : '1px dashed #e5ebf3', minHeight: 24, display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, flexWrap: 'wrap' }}>
+                                    {c.ship_mode
+                                      ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                                          background: c.ship_mode === 'FCL' ? '#E6F1FB' : '#EEEDFE',
+                                          color: c.ship_mode === 'FCL' ? '#0C447C' : '#3C3489' }}>
+                                          {c.ship_mode}
+                                        </span>
+                                      : <span style={{ color: '#ccc', fontSize: 10 }}>—</span>}
+                                    {c.ship_mode === 'LCL' && c.box_count != null && (
+                                      <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>{c.box_count} box{c.box_count === 1 ? '' : 'es'}</span>
+                                    )}
+                                  </div>
                                 ))}
-                                {totalContainerBoxes > 0 && (
-                                  <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>{totalContainerBoxes} boxes</span>
-                                )}
                               </div>
                             : <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
                                 <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
@@ -595,6 +587,14 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                 </>}
                               </div>}
                         </td>
+                        {/* Notes (now left of Docs, right of FCL/LCL) */}
+                        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }}>
+                          <PONotesCell po={p} upsertPO={upsertPO} />
+                        </td>
+                        {/* Docs */}
+                        <td style={{ ...tdS, minWidth: 190, verticalAlign: 'top', padding: '8px' }}>
+                          <PODocsCell poId={p.id} />
+                        </td>
                         {/* Est. Receive Date — when containers exist, show
                             each container's own ETA on its own line (with
                             its own color + days-out). Containers on the
@@ -603,7 +603,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             each container's eta in Supabase; manual entries
                             persist until tracking provides a real date.
                             Falls back to p.eta when there are no containers. */}
-                        <td style={{ ...tdS, fontWeight: 700, minWidth: 150, padding: 4, verticalAlign: 'top', ...(hasAnyContainers ? {} : { background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }) }}>
+                        <td style={{ ...tdS, minWidth: 130, padding: 4, verticalAlign: 'top' }}>
                           {hasAnyContainers
                             ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                 {containers.map(c => {
@@ -636,16 +636,23 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   )
                                 })}
                               </div>
-                            : isDelivered ? <div style={{ textAlign: 'center' }}>Delivered</div> : (
-                                <div>
-                                  <div style={{ fontSize: 11 }}>{effectiveEta ? fmtTrackDate(effectiveEta) : 'TBD'}</div>
-                                  {effectiveDays !== null && effectiveEta && (
-                                    <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>
-                                      {effectiveDays < 0 ? `${Math.abs(effectiveDays)}d overdue` : effectiveDays === 0 ? 'Today' : `in ${effectiveDays}d`}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
+                            : <div style={{ background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}`, borderRadius: 5, padding: '5px 7px', fontSize: 10 }}>
+                                {isDelivered ? (
+                                  <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
+                                ) : (
+                                  <>
+                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{effectiveEta ? fmtTrackDate(effectiveEta) : 'TBD'}</div>
+                                    {effectiveDays !== null && effectiveEta && (
+                                      <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>
+                                        {effectiveDays < 0 ? `${Math.abs(effectiveDays)}d overdue` : effectiveDays === 0 ? 'Today' : `in ${effectiveDays}d`}
+                                      </div>
+                                    )}
+                                    {hasInfo && extractIsoDate(info.eta) && (
+                                      <div style={{ fontSize: 8, fontWeight: 400, marginTop: 1, opacity: 0.75 }}>📡 from tracking</div>
+                                    )}
+                                  </>
+                                )}
+                              </div>}
                         </td>
                       </tr>
 
