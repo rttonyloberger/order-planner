@@ -77,6 +77,12 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   // firing its own query.
   const [containerMap, setContainerMap] = useState({})
   const [expandedContainersId, setExpandedContainersId] = useState(null)
+  // Per-container tracking info — lifted up to the parent so the BB main row
+  // can display aggregated Carrier / Last Update / Tracking Status / Boxes
+  // across all containers even when the per-container panel is collapsed.
+  // Keyed by container.id.
+  const [containerTrackingInfo, setContainerTrackingInfo] = useState({})
+  const [containerLoadingIds, setContainerLoadingIds] = useState(new Set())
 
   const bbPos = pos
     .filter(p => p.dest === 'BB' && p.status !== 'Complete')
@@ -211,7 +217,49 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       ...prev,
       [poId]: (prev[poId] || []).filter(c => c.id !== containerId)
     }))
+    // Drop any cached tracking info for the deleted container.
+    setContainerTrackingInfo(prev => { const n = { ...prev }; delete n[containerId]; return n })
   }
+
+  // Fetch 17TRACK info for a single container and cache it on
+  // containerTrackingInfo[container.id]. Also auto-writes the container's eta
+  // when tracking returns a new date — same pattern as loadOne(po).
+  const loadContainerOne = useCallback(async (container) => {
+    if (!container.tracking_number) return
+    if (isDirectOnly(container.tracking_number)) return
+    setContainerLoadingIds(prev => new Set([...prev, container.id]))
+    try {
+      const info = await getTracking(container.tracking_number)
+      setContainerTrackingInfo(prev => ({ ...prev, [container.id]: info || { noData: true } }))
+      if (info) {
+        const iso = extractIsoDate(info.eta)
+        if (iso && iso !== container.eta) {
+          await supabase.from('awd_containers').update({ eta: iso }).eq('id', container.id)
+          setContainerMap(prev => ({
+            ...prev,
+            [container.po_id]: (prev[container.po_id] || []).map(c =>
+              c.id === container.id ? { ...c, eta: iso } : c
+            )
+          }))
+        }
+      }
+    } catch (e) {
+      console.error('Container tracking error for', container.id, e)
+      setContainerTrackingInfo(prev => ({ ...prev, [container.id]: { noData: true } }))
+    }
+    setContainerLoadingIds(prev => { const n = new Set(prev); n.delete(container.id); return n })
+  }, [])
+
+  // Auto-load tracking info for any container that has a tracking number and
+  // hasn't been fetched yet. Runs whenever the container map changes.
+  useEffect(() => {
+    const allContainers = Object.values(containerMap).flat()
+    for (const c of allContainers) {
+      if (c.tracking_number && !containerTrackingInfo[c.id] && !containerLoadingIds.has(c.id)) {
+        loadContainerOne(c)
+      }
+    }
+  }, [containerMap, containerTrackingInfo, containerLoadingIds, loadContainerOne])
 
   const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
   const overdue = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d < 0 }).length
@@ -279,9 +327,45 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   const hasAnyContainers = containers.length >= 1
                   const isContainersExpanded = expandedContainersId === p.id
 
+                  // Aggregated container info used to fill the main row's
+                  // Carrier / Tracking # / Last Update / Tracking Status /
+                  // FCL/LCL cells when containers exist. Without this the
+                  // main row would show empty fields even though the team
+                  // has already entered tracking info at the container level.
+                  const containerInfos = containers.map(c => ({ c, info: containerTrackingInfo[c.id] }))
+                  const containerCarriers = [...new Set(containers.map(c => {
+                    const info = containerTrackingInfo[c.id]
+                    if (info && !info.noData && info.resolvedCarrier) return info.resolvedCarrier
+                    const det = detectCarrier(c.tracking_number)
+                    return det?.name
+                  }).filter(Boolean))]
+                  const containerLastTimes = containers
+                    .map(c => containerTrackingInfo[c.id]?.lastTime)
+                    .filter(Boolean)
+                  const latestContainerUpdate = containerLastTimes.length > 0
+                    ? containerLastTimes.slice().sort((a, b) => new Date(b) - new Date(a))[0]
+                    : null
+                  const validContainerInfos = containerInfos
+                    .map(x => x.info)
+                    .filter(i => i && !i.noData && i.statusCode)
+                  const totalContainerBoxes = containers.reduce((s, c) => s + (c.box_count || 0), 0)
+                  const containerShipModes = [...new Set(containers.map(c => c.ship_mode).filter(Boolean))]
+                  const anyContainerLoading = containers.some(c => containerLoadingIds.has(c.id))
+                  // Earliest container eta → drives the main row's Est.
+                  // Receive Date and its "days out" coloring when containers
+                  // are present. Falls back to p.eta.
+                  const earliestContainerEta = containers.reduce((best, c) => {
+                    if (!c.eta) return best
+                    if (!best) return c.eta
+                    return new Date(c.eta) < new Date(best) ? c.eta : best
+                  }, null)
+                  const effectiveEta = hasAnyContainers ? (earliestContainerEta || p.eta) : p.eta
+                  const effectiveDays = daysUntil(effectiveEta)
+                  const effectiveAc = arrivalColor(effectiveDays)
+
                   // Days away cell — show Delivered if delivered
                   const dTxt = days === null ? 'TBD' : days < 0 ? `${Math.abs(days)}d overdue` : `${days} days`
-                  const dStyle = isDelivered ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' } : ac
+                  const dStyle = isDelivered ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' } : effectiveAc
 
                   return (
                     <React.Fragment key={p.id}>
@@ -327,56 +411,130 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         </td>
                         <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }}>#{safeStr(p.id)}</td>
                         <td style={tdS}><span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: p.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: p.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(p.entity)}</span></td>
+                        {/* Product — read-only on BB Receiving. Edits happen
+                            upstream on the RT / SG Draft rows. */}
                         <td style={{ ...tdS, minWidth: 120 }}>
-                          <select style={selS} value={p.product_type || ''} onChange={e => update(p, 'product_type', e.target.value)}>
-                            <option value=''>--</option>
-                            {opts.map(o => <option key={o} value={o}>{o}</option>)}
-                          </select>
+                          <span style={{ fontSize: 11, color: '#444' }}>{p.product_type || '—'}</span>
                         </td>
                         <td style={tdS}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, fontWeight: 600, background: p.status === 'Committed' ? '#E6F1FB' : '#FAEEDA', color: p.status === 'Committed' ? '#0C447C' : '#633806' }}>{safeStr(p.status)}</span></td>
                         <td style={{ ...tdS, fontSize: 11, color: '#666' }}>{fmtDate(p.order_date)}</td>
+                        {/* ETA — read-only on BB Receiving. Edit upstream on
+                            the RT / SG tab, or let tracking numbers update
+                            the Est. Receive Date column automatically. */}
                         <td style={tdS}>
-                          <input key={p.eta || 'none'} type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+                          <span style={{ fontSize: 11, color: '#444' }}>{p.eta ? fmtDate(p.eta) : '—'}</span>
                           {hasInfo && extractIsoDate(info.eta) && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>📡 from tracking</div>}
                         </td>
                         <td style={{ ...tdS, fontSize: 11 }}>{fmtMoney(p.po_value)}</td>
+                        {/* Carrier — when the PO has containers, aggregate
+                            across them. Otherwise fall back to PO-level
+                            tracking info. */}
                         <td style={{ ...tdS, minWidth: 140, fontSize: 10 }}>
-                          {hasInfo && info.resolvedCarrier
-                            ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(info.resolvedCarrier)}</span>
-                            : (() => { const det = detectCarrier(p.tracking_number); return det ? <span style={{ background: '#f0f0f0', color: '#555', padding: '2px 7px', borderRadius: 8 }}>{safeStr(det.name)}</span> : <span style={{ color: '#ccc' }}>—</span> })()
+                          {hasAnyContainers
+                            ? (containerCarriers.length === 0
+                                ? <span style={{ color: '#ccc' }}>—</span>
+                                : containerCarriers.length === 1
+                                  ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(containerCarriers[0])}</span>
+                                  : <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, justifyContent: 'center' }}>
+                                      {containerCarriers.map(c => (
+                                        <span key={c} style={{ background: '#E6F1FB', color: '#0C447C', padding: '1px 6px', borderRadius: 8, fontWeight: 600, fontSize: 9 }}>{safeStr(c)}</span>
+                                      ))}
+                                    </div>)
+                            : hasInfo && info.resolvedCarrier
+                              ? <span style={{ background: '#E6F1FB', color: '#0C447C', padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>{safeStr(info.resolvedCarrier)}</span>
+                              : (() => { const det = detectCarrier(p.tracking_number); return det ? <span style={{ background: '#f0f0f0', color: '#555', padding: '2px 7px', borderRadius: 8 }}>{safeStr(det.name)}</span> : <span style={{ color: '#ccc' }}>—</span> })()
                           }
                         </td>
+                        {/* Tracking # — when containers exist, show a
+                            compact list of each container's tracking number
+                            so the team can see at a glance that tracking is
+                            filled in even when the drop-down is collapsed.
+                            Tracking numbers are still edited inside each
+                            container row in the expanded panel. */}
                         <td style={{ ...tdS, minWidth: 170 }}>
-                          <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n }) }} />
+                          {hasAnyContainers
+                            ? <div style={{ textAlign: 'left' }}>
+                                {containers.map(c => {
+                                  const label = c.name || `${p.id}-${c.container_num}`
+                                  return (
+                                    <div key={c.id} style={{ padding: '1px 0', fontSize: 10, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                      <span style={{ color: '#888', fontSize: 9, minWidth: 64, flexShrink: 0 }}>{label}:</span>
+                                      {c.tracking_number
+                                        ? <span style={{ fontFamily: 'monospace', color: '#444' }}>{safeStr(c.tracking_number)}</span>
+                                        : <span style={{ color: '#bbb', fontStyle: 'italic' }}>—</span>}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            : <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n }) }} />
+                          }
                         </td>
+                        {/* Last Update — aggregates across containers: most
+                            recent lastTime among any container. Falls back
+                            to PO-level tracking info when there are no
+                            containers. */}
                         <td style={{ ...tdS, minWidth: 120, fontSize: 10 }}>
-                          {isLoading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
-                            : hasInfo && info.lastTime ? <span style={{ color: '#444' }}>{fmtTrackDate(info.lastTime)}</span>
-                            : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
-                            : <span style={{ color: '#ccc' }}>—</span>}
+                          {hasAnyContainers
+                            ? (anyContainerLoading && !latestContainerUpdate
+                                ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
+                                : latestContainerUpdate
+                                  ? <span style={{ color: '#444' }}>{fmtTrackDate(latestContainerUpdate)}</span>
+                                  : <span style={{ color: '#ccc' }}>—</span>)
+                            : isLoading ? <span style={{ color: '#888', fontStyle: 'italic' }}>Checking…</span>
+                              : hasInfo && info.lastTime ? <span style={{ color: '#444' }}>{fmtTrackDate(info.lastTime)}</span>
+                              : p.tracking_number ? <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
+                              : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
+                        {/* Tracking Status — aggregates across containers.
+                            All-same status shows the shared status pill with
+                            a count. Mixed statuses show a breakdown. */}
                         <td style={{ ...tdS, minWidth: 140 }}>
-                          {isLoading ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>Fetching…</span>
-                            : hasInfo
-                              ? <div>
-                                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: info.statusStyle?.bg || '#f5f5f5', color: info.statusStyle?.color || '#888' }}>
-                                    {safeStr(info.statusIcon)} {safeStr(info.statusLabel)}
-                                  </span>
-                                  {info.totalEvents > 0 && (
-                                    <button onClick={() => setExpandedId(isExpanded ? null : p.id)} style={{ display: 'block', fontSize: 9, color: '#0C447C', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 3 }}>
-                                      {isExpanded ? 'Hide history' : `${info.totalEvents} updates`}
-                                    </button>
-                                  )}
-                                </div>
-                              : p.tracking_number
-                                ? (isDirectOnly(p.tracking_number)
-                                    ? <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600, display: 'inline-block' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>
-                                    : <div>
-                                        <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
-                                        <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
-                                        {getDirectUrl(p.tracking_number) && <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 9, color: '#0C447C', marginTop: 3, textDecoration: 'underline' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>}
-                                      </div>)
-                                : <span style={{ color: '#ccc' }}>—</span>}
+                          {hasAnyContainers
+                            ? (anyContainerLoading && validContainerInfos.length === 0
+                                ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>Fetching…</span>
+                                : validContainerInfos.length === 0
+                                  ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
+                                  : (() => {
+                                      const codes = [...new Set(validContainerInfos.map(i => i.statusCode))]
+                                      if (codes.length === 1) {
+                                        const i = validContainerInfos[0]
+                                        return (
+                                          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: i.statusStyle?.bg || '#f5f5f5', color: i.statusStyle?.color || '#888' }}>
+                                            {safeStr(i.statusIcon)} {safeStr(i.statusLabel)} ({validContainerInfos.length})
+                                          </span>
+                                        )
+                                      }
+                                      const byCode = {}
+                                      for (const vi of validContainerInfos) byCode[vi.statusLabel || vi.statusCode] = (byCode[vi.statusLabel || vi.statusCode] || 0) + 1
+                                      return (
+                                        <div style={{ fontSize: 10, color: '#555', lineHeight: 1.4 }}>
+                                          {Object.entries(byCode).map(([label, n]) => (
+                                            <div key={label}>{n}× {label}</div>
+                                          ))}
+                                        </div>
+                                      )
+                                    })())
+                            : isLoading ? <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>Fetching…</span>
+                              : hasInfo
+                                ? <div>
+                                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: info.statusStyle?.bg || '#f5f5f5', color: info.statusStyle?.color || '#888' }}>
+                                      {safeStr(info.statusIcon)} {safeStr(info.statusLabel)}
+                                    </span>
+                                    {info.totalEvents > 0 && (
+                                      <button onClick={() => setExpandedId(isExpanded ? null : p.id)} style={{ display: 'block', fontSize: 9, color: '#0C447C', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 3 }}>
+                                        {isExpanded ? 'Hide history' : `${info.totalEvents} updates`}
+                                      </button>
+                                    )}
+                                  </div>
+                                : p.tracking_number
+                                  ? (isDirectOnly(p.tracking_number)
+                                      ? <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, padding: '3px 8px', background: '#0C447C', color: '#fff', borderRadius: 5, textDecoration: 'none', fontWeight: 600, display: 'inline-block' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>
+                                      : <div>
+                                          <span style={{ fontSize: 10, color: '#888', fontStyle: 'italic' }}>No status yet</span>
+                                          <button onClick={() => loadOne(p)} style={recheckStyle}>Re-check</button>
+                                          {getDirectUrl(p.tracking_number) && <a href={getDirectUrl(p.tracking_number)} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: 9, color: '#0C447C', marginTop: 3, textDecoration: 'underline' }}>Track on {detectCarrier(p.tracking_number)?.name} →</a>}
+                                        </div>)
+                                  : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
                         {/* Notes (left of Docs) */}
                         <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '8px' }}>
@@ -386,32 +544,57 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         <td style={{ ...tdS, minWidth: 190, verticalAlign: 'top', padding: '8px' }}>
                           <PODocsCell poId={p.id} />
                         </td>
+                        {/* FCL/LCL + boxes — when containers exist, show
+                            aggregated mode pills + total box count across
+                            all containers. Otherwise fall back to the
+                            PO-level editable controls. */}
                         <td style={{ ...tdS, minWidth: 120 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-                            <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
-                              <option value=''>--</option><option value='FCL'>FCL</option><option value='LCL'>LCL</option>
-                            </select>
-                            {p.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
-                            {p.ship_mode === 'LCL' && <>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                                <input type="text" inputMode="numeric" placeholder="#" defaultValue={p.box_count || ''} onBlur={e => { const v = parseInt(e.target.value); update(p, 'box_count', !isNaN(v) ? v : null) }} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 40 }} />
-                                <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+                          {hasAnyContainers
+                            ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {containerShipModes.length === 0 && <span style={{ color: '#ccc', fontSize: 10 }}>—</span>}
+                                {containerShipModes.map(m => (
+                                  <span key={m} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                                    background: m === 'FCL' ? '#E6F1FB' : '#EEEDFE',
+                                    color: m === 'FCL' ? '#0C447C' : '#3C3489' }}>
+                                    {m}
+                                  </span>
+                                ))}
+                                {totalContainerBoxes > 0 && (
+                                  <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>{totalContainerBoxes} boxes</span>
+                                )}
                               </div>
-                            </>}
-                          </div>
+                            : <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
+                                  <option value=''>--</option><option value='FCL'>FCL</option><option value='LCL'>LCL</option>
+                                </select>
+                                {p.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+                                {p.ship_mode === 'LCL' && <>
+                                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                                    <input type="text" inputMode="numeric" placeholder="#" defaultValue={p.box_count || ''} onBlur={e => { const v = parseInt(e.target.value); update(p, 'box_count', !isNaN(v) ? v : null) }} style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 40 }} />
+                                    <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+                                  </div>
+                                </>}
+                              </div>}
                         </td>
+                        {/* Est. Receive Date — when containers exist, show
+                            the earliest container eta (the first one that
+                            will arrive). Otherwise show p.eta. Tracking
+                            auto-updates both, so this stays fresh. */}
                         <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}` }}>
                           {isDelivered ? 'Delivered' : (
                             <div>
-                              <div style={{ fontSize: 11 }}>{p.eta ? fmtTrackDate(p.eta) : 'TBD'}</div>
-                              {days !== null && p.eta && (
+                              <div style={{ fontSize: 11 }}>{effectiveEta ? fmtTrackDate(effectiveEta) : 'TBD'}</div>
+                              {effectiveDays !== null && effectiveEta && (
                                 <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>
-                                  {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'Today' : `in ${days}d`}
+                                  {effectiveDays < 0 ? `${Math.abs(effectiveDays)}d overdue` : effectiveDays === 0 ? 'Today' : `in ${effectiveDays}d`}
                                 </div>
                               )}
-                              {/* Tracking eta now auto-writes into p.eta, so the
-                                  main date above already reflects it. */}
+                              {hasAnyContainers && earliestContainerEta && earliestContainerEta !== p.eta && (
+                                <div style={{ fontSize: 8, fontWeight: 400, marginTop: 1, opacity: 0.75 }}>
+                                  earliest container
+                                </div>
+                              )}
                             </div>
                           )}
                         </td>
@@ -447,6 +630,8 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                       key={c.id}
                                       container={c}
                                       parentPo={p}
+                                      trackingInfo={containerTrackingInfo[c.id]}
+                                      loading={containerLoadingIds.has(c.id)}
                                       onUpdate={(updates) => updateContainer(p.id, c.id, updates)}
                                       onDelete={() => deleteContainer(p.id, c.id)}
                                     />
@@ -523,33 +708,46 @@ function TrackingInput({ po, onSubmit, onRemove }) {
 // auto-detect), FCL/LCL + boxes, per-container notes, shared PO-level docs,
 // and its own est. receive date. Tracking writes back to the container's eta
 // the same way the main BB row does.
-function BBContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
+//
+// trackingInfo / loading are supplied from the parent ReceivingTab so the
+// same 17TRACK fetch powers both the aggregated main-row display and the
+// per-container sub-row — no double API calls. When trackingInfo/loading
+// are not supplied the component falls back to internal state so it stays
+// drop-in compatible with older callers.
+function BBContainerSubRow({ container, parentPo, trackingInfo: trackingInfoProp, loading: loadingProp, onUpdate, onDelete }) {
   const [val, setVal] = useState(container.tracking_number || '')
-  const [trackingInfo, setTrackingInfo] = useState(null)
-  const [loading, setLoading] = useState(false)
+  // Local fallback state only used if the parent didn't pass trackingInfo.
+  const [localTrackingInfo, setLocalTrackingInfo] = useState(null)
+  const [localLoading, setLocalLoading] = useState(false)
+
+  const trackingInfo = trackingInfoProp !== undefined ? trackingInfoProp : localTrackingInfo
+  const loading = loadingProp !== undefined ? loadingProp : localLoading
 
   // Default display name: {po.id}-{container_num}
   const defaultName = `${parentPo.id}-${container.container_num}`
 
   useEffect(() => { setVal(container.tracking_number || '') }, [container.tracking_number])
 
-  // Fetch tracking on mount (and when tracking number changes). Mirror the
-  // eta-overwrite behavior of the main BB row.
+  // Fetch tracking on mount / whenever tracking number changes — but ONLY
+  // when the parent isn't already managing tracking info for us. When the
+  // parent passes trackingInfoProp, skip this to avoid duplicate 17TRACK
+  // calls and racing eta writes.
   useEffect(() => {
+    if (trackingInfoProp !== undefined) return
     let cancelled = false
     if (container.tracking_number && !isDirectOnly(container.tracking_number)) {
-      setLoading(true)
+      setLocalLoading(true)
       getTracking(container.tracking_number).then(info => {
         if (cancelled) return
-        setTrackingInfo(info)
+        setLocalTrackingInfo(info)
         if (info) {
           const iso = extractIsoDate(info.eta)
           if (iso && iso !== container.eta) onUpdate({ eta: iso })
         }
-      }).finally(() => { if (!cancelled) setLoading(false) })
+      }).finally(() => { if (!cancelled) setLocalLoading(false) })
     }
     return () => { cancelled = true }
-  }, [container.tracking_number])
+  }, [container.tracking_number, trackingInfoProp])
 
   const handleTrackingBlur = async () => {
     const trimmed = val.trim()
@@ -558,14 +756,18 @@ function BBContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
     await onUpdate({ tracking_number: trimmed || null, carrier_slug: auto?.code || null })
     if (trimmed) {
       await registerTracking(trimmed)
-      setTimeout(async () => {
-        const info = await getTracking(trimmed)
-        setTrackingInfo(info)
-        if (info) {
-          const iso = extractIsoDate(info.eta)
-          if (iso) onUpdate({ eta: iso })
-        }
-      }, 2000)
+      // Only chase a follow-up fetch locally if the parent isn't managing
+      // tracking info — otherwise the parent's auto-loader will pick it up.
+      if (trackingInfoProp === undefined) {
+        setTimeout(async () => {
+          const info = await getTracking(trimmed)
+          setLocalTrackingInfo(info)
+          if (info) {
+            const iso = extractIsoDate(info.eta)
+            if (iso) onUpdate({ eta: iso })
+          }
+        }, 2000)
+      }
     }
   }
 
