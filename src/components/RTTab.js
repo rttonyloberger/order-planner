@@ -29,10 +29,11 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <ArrivalLegend />
       {/* Use the same expandable AWDPOTable as SG/AWD tabs so all container
           info (LCL box counts, per-container tracking, per-container ETAs)
-          entered on the BB Receiving tab is visible here too. */}
+          entered on the BB Receiving tab is visible here too. hideDest drops
+          the Dest column because every row here is already BB. */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT" />
+        tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT" hideDest={true} />
       <AddAWDPORow
         tableId="rt-bb"
         entity="RT"
@@ -42,6 +43,7 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
         productOptions={RT_PRODUCTS}
         upsertPO={upsertPO}
         label="Add a new RT BB PO"
+        hideDest={true}
       />
 
       <div style={bigSecStyle}>RT AWD and FBA Open POs and Arrivals</div>

@@ -78,9 +78,9 @@ export default function PONotesCell({ po, upsertPO, readOnly = false }) {
         display: 'block', width: '100%', minWidth: 140, maxWidth: 200,
         fontSize: 11, textAlign: 'left', cursor: 'pointer',
         padding: '5px 7px', borderRadius: 5,
-        background: hasNotes ? '#FFF9E1' : '#fafafa',
-        color: hasNotes ? '#4A3A00' : '#888',
-        border: `1px dashed ${hasNotes ? '#D6B64A' : '#ccc'}`,
+        background: hasNotes ? '#b7d0e2' : '#fafafa',
+        color: hasNotes ? '#0C447C' : '#888',
+        border: `1px dashed ${hasNotes ? '#6F9EBE' : '#ccc'}`,
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         fontFamily: 'inherit'
       }}

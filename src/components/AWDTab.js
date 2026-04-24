@@ -300,6 +300,7 @@ function DateReceivedForm({ dateRef, poId }) {
 export function AWDPORow({
   po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal,
   allowContainerExpand = true, readOnlyStatus = false,
+  hideDest = false,
   requireMultipleToExpand = false,
   preloadedContainers,
 }) {
@@ -416,13 +417,13 @@ export function AWDPORow({
   // it 1 container"). The dropdown is still gated on real container count.
   const displayContainerCount = Math.max(containers.length, 1)
 
-  // Column counts for the row layout:
-  //   completed view: Supplier, PO #, Entity, Dest, Product, Status, Order Date,
-  //                   Boxes, Containers, Docs, Date Received          (11 cols)
-  //   open view:      Supplier, PO #, Entity, Dest, Product, Status, Order Date,
+  // Column counts for the row layout. Dest is dropped when hideDest is set.
+  //   completed view: Supplier, PO #, Entity, [Dest,] Product, Status, Order Date,
+  //                   Boxes, Containers, Docs, Date Received          (11 / 10 cols)
+  //   open view:      Supplier, PO #, Entity, [Dest,] Product, Status, Order Date,
   //                   ETA, PO Value, Boxes, Containers, Notes, Docs,
-  //                   Est. Receive Date                                (14 cols)
-  const colSpanForExpansion = isComplete ? 11 : 14
+  //                   Est. Receive Date                                (14 / 13 cols)
+  const colSpanForExpansion = (isComplete ? 11 : 14) - (hideDest ? 1 : 0)
 
   return (
     <>
@@ -454,7 +455,7 @@ export function AWDPORow({
         <td style={tdS} onClick={e => e.stopPropagation()}>
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 700, background: po.entity === 'RT' ? '#E6F1FB' : '#EAF3DE', color: po.entity === 'RT' ? '#0C447C' : '#27500A' }}>{safeStr(po.entity)}</span>
         </td>
-        <td style={tdS} onClick={e => e.stopPropagation()}>
+        {!hideDest && <td style={tdS} onClick={e => e.stopPropagation()}>
           {isDraft ? (
             <select style={selS} value={po.dest || ''} onChange={e => update('dest', e.target.value)}>
               <option value=''>--</option>
@@ -468,7 +469,7 @@ export function AWDPORow({
               <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 10, fontWeight: 600, background: db.bg, color: db.fc }}>{po.dest}</span>
             </div>
           )}
-        </td>
+        </td>}
         <td style={{ ...tdS, minWidth: 120 }} onClick={e => e.stopPropagation()}>
           {isDraft ? (
             <select style={selS} value={po.product_type || ''} onChange={e => update('product_type', e.target.value)}>
@@ -612,6 +613,10 @@ export function AWDPOTable({
   destOptions = ['AWD', 'FBA', 'RT AWD'],
   showCompleted = false,
   hideDrafts = false,
+  // hideDest hides the "Dest" column entirely — used on RT tab's BB section
+  // where every PO is going to BB so the column is redundant. AWD/FBA tabs
+  // still show it because rows there actually vary.
+  hideDest = false,
   allowContainerExpand = true,
   readOnlyStatus = false,
   requireMultipleToExpand = false,
@@ -690,9 +695,10 @@ export function AWDPOTable({
   // Tony's round-10 request. ETA is also hidden on the Completed tab. The
   // last column is "Date Received" on the Completed tab and "Est. Receive
   // Date" otherwise.
-  const headers = showCompleted
+  const headersFull = showCompleted
     ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','Boxes','Containers','Docs','Date Received']
     : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Notes','Docs','Est. Receive Date']
+  const headers = hideDest ? headersFull.filter(h => h !== 'Dest') : headersFull
   const colCount = headers.length
 
   return (
@@ -712,6 +718,7 @@ export function AWDPOTable({
               destOptions={destOptions} showModal={showModal} closeModal={closeModal}
               allowContainerExpand={allowContainerExpand}
               readOnlyStatus={readOnlyStatus}
+              hideDest={hideDest}
               requireMultipleToExpand={requireMultipleToExpand}
               preloadedContainers={containerMap[p.id]} />
           ))}
@@ -732,7 +739,7 @@ export function AWDPOTable({
 // Shared add-PO row used by RT and SG tabs.
 // tableId is set by the caller (rt-bb, rt-awd, sg-bb, sg-awdfba) so the right
 // section gets the right PO.
-export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, suppliers, productOptions = [], upsertPO, label = 'Add a new PO' }) {
+export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, suppliers, productOptions = [], upsertPO, label = 'Add a new PO', hideDest = false }) {
   const [row, setRow] = useState({
     supplier: '', id: '', status: 'Committed',
     dest: defaultDest || (destOptions && destOptions[0]) || '',
@@ -769,9 +776,9 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <input style={addInpS} placeholder="PO #" value={row.id} onChange={e => setRow(r => ({...r, id: e.target.value}))} />
-        <select style={addSelS} value={row.dest} onChange={e => setRow(r => ({...r, dest: e.target.value}))}>
+        {!hideDest && <select style={addSelS} value={row.dest} onChange={e => setRow(r => ({...r, dest: e.target.value}))}>
           {destOptions.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
+        </select>}
         {productOptions.length > 0 && (
           <select style={addSelS} value={row.product_type} onChange={e => setRow(r => ({...r, product_type: e.target.value}))}>
             <option value=''>Product</option>
