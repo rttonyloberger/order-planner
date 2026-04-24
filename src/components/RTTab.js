@@ -1,10 +1,9 @@
 import React from 'react'
 import { SUPP_COLORS, RT_PRODUCTS } from '../constants'
 import OrderCalendar from './OrderCalendar'
-import POTable from './POTable'
 import { AWDPOTable, AddAWDPORow } from './AWDTab'
 
-// Suppliers list used by the RT add-PO rows. Matches the list in POTable.js
+// Suppliers list used by the RT add-PO rows. Matches the list in SGTab
 // so both BB and AWD add-rows offer the same dropdown.
 const RT_SUPPLIERS = ['Dongyang Shanye Fishing','I-Lure','Sourcepro','WEIGHT CO','JXL','Weihai Huayue Sports','XINGTAI XIOU IMPORT']
 
@@ -24,8 +23,26 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
         upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
 
       <div style={bigSecStyle}>RT Big Bend (BB) Open POs and Arrivals</div>
-      <POTable tableId="rt-bb" pos={pos} isSG={false} showShip={true}
-        upsertPO={upsertPO} deletePO={deletePO} showModal={showModal} closeModal={closeModal} />
+      <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
+        Click any row to expand and manage containers — each container can have its own tracking number, boxes, FCL/LCL split and estimated receive date. Matches what you see on the BB Receiving tab.
+      </p>
+      <ArrivalLegend />
+      {/* Use the same expandable AWDPOTable as SG/AWD tabs so all container
+          info (LCL box counts, per-container tracking, per-container ETAs)
+          entered on the BB Receiving tab is visible here too. */}
+      <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
+        showModal={showModal} closeModal={closeModal}
+        tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT" />
+      <AddAWDPORow
+        tableId="rt-bb"
+        entity="RT"
+        defaultDest="BB"
+        destOptions={['BB']}
+        suppliers={RT_SUPPLIERS}
+        productOptions={RT_PRODUCTS}
+        upsertPO={upsertPO}
+        label="Add a new RT BB PO"
+      />
 
       <div style={bigSecStyle}>RT AWD and FBA Open POs and Arrivals</div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>

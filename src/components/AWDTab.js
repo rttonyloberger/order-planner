@@ -611,6 +611,7 @@ export function AWDPOTable({
   tableIds = ['sg-awdfba', 'rt-awd'],
   destOptions = ['AWD', 'FBA', 'RT AWD'],
   showCompleted = false,
+  hideDrafts = false,
   allowContainerExpand = true,
   readOnlyStatus = false,
   requireMultipleToExpand = false,
@@ -626,6 +627,10 @@ export function AWDPOTable({
     .filter(p => tableIds.includes(p.table_id))
     .filter(p => !entityFilter || p.entity === entityFilter)
     .filter(p => showCompleted ? p.status === 'Complete' : p.status !== 'Complete')
+    // Receiving tabs set hideDrafts so the warehouse only sees POs that
+    // have been committed. Draft POs are still visible on the RT / SG
+    // tabs where they're edited.
+    .filter(p => hideDrafts ? p.status !== 'Draft' : true)
   const idKey = tablePosAll.map(p => p.id).join(',')
 
   useEffect(() => {
@@ -795,9 +800,11 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
 // Tony's round-7 request — new AWD/FBA POs are now added from the SG and RT
 // tabs directly (using AddAWDPORow there).
 export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
+  // Receiving tabs only show committed POs. Drafts are still editable on
+  // the RT / SG tabs but the warehouse shouldn't see them.
   const awdPos = pos
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
-    .filter(p => p.status !== 'Complete')
+    .filter(p => p.status !== 'Complete' && p.status !== 'Draft')
 
   return (
     <div>
@@ -805,7 +812,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
       <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Receiving</h2>
-          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
+          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
         </div>
         <div style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
           <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>
@@ -815,7 +822,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
 
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        readOnlyStatus={true} />
+        readOnlyStatus={true} hideDrafts={true} />
     </div>
   )
 }

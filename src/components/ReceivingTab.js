@@ -180,8 +180,10 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   // tracking hit is preserved until tracking actually returns an ETA.
   const [containerTrackingFetched, setContainerTrackingFetched] = useState({})
 
+  // Receiving tab shows only Committed POs. Drafts stay editable on the
+  // RT / SG tabs, but the warehouse team shouldn't see them here.
   const bbPos = pos
-    .filter(p => p.dest === 'BB' && p.status !== 'Complete')
+    .filter(p => p.dest === 'BB' && p.status !== 'Complete' && p.status !== 'Draft')
     .sort((a, b) => {
       if (!a.eta && !b.eta) return 0
       if (!a.eta) return 1
@@ -378,7 +380,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       <div style={{ background: 'linear-gradient(135deg,#18a0cc,#22b6e1)', borderRadius: 10, padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
-          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
+          <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed inbound BB shipments — RT and SG combined, sorted by arrival</p>
           {lastRefresh && <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
           {/* Manual-lookup fallback: if the 17TRACK API fails or a number isn't
               registered yet, users can click here, paste the tracking number
