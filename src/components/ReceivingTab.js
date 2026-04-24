@@ -370,9 +370,6 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   }, [containerMap, containerTrackingFetched, containerLoadingIds, loadContainerOne])
 
   const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
-  const overdue = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d < 0 }).length
-  const inTransit = Object.values(trackingInfo).filter(t => t?.statusCode === 'InTransit').length
-  const delivered = Object.values(trackingInfo).filter(t => t?.statusCode === 'Delivered').length
   const totalVal = bbPos.reduce((s, p) => s + (p.po_value || 0), 0)
 
   return (
@@ -383,16 +380,22 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Big Bend Receiving</h2>
           <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All open inbound BB shipments — RT and SG combined, sorted by arrival</p>
           {lastRefresh && <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
+          {/* Manual-lookup fallback: if the 17TRACK API fails or a number isn't
+              registered yet, users can click here, paste the tracking number
+              on 17track.net, and see where the package is. */}
+          <p style={{ color: '#000', fontSize: 10, margin: '6px 0 0' }}>
+            Tracking API not working? →{' '}
+            <a href="https://www.17track.net/zh-cn" target="_blank" rel="noopener noreferrer" style={{ color: '#0C447C', fontWeight: 600, textDecoration: 'underline' }}>
+              Look up a tracking # manually on 17track.net ↗
+            </a>
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {[
             { num: bbPos.length, lbl: 'Open POs' },
-            { num: inTransit, lbl: 'In Transit' },
-            { num: delivered, lbl: 'Delivered' },
             { num: arriving30, lbl: 'Arriving ≤30d' },
-            { num: overdue, lbl: 'Overdue' },
           ].map(s => (
-            <div key={s.lbl} style={{ background: s.lbl === 'Delivered' ? 'rgba(39,80,10,.2)' : 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
+            <div key={s.lbl} style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
               <div style={{ color: '#000', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{s.num}</div>
               <div style={{ color: '#000', fontSize: 10, marginTop: 3 }}>{s.lbl}</div>
             </div>

@@ -1,15 +1,12 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
-import { CARRIERS, TRACKING_STATUSES, detectCarrier, registerTracking, getTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
 
-// Pull a YYYY-MM-DD substring out of whatever 17TRACK gave us.
-function extractIsoDate(val) {
-  if (!val || typeof val !== 'string') return null
-  const m = val.match(/(\d{4})-(\d{2})-(\d{2})/)
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
-}
+// NOTE: Tracking columns were removed from this table on purpose. The
+// BB Receiving tab is the single source of truth for tracking numbers,
+// carriers, last-update, and per-container status. Having it on the
+// RT tab too just caused double-entry and confused the team.
 
 // Today's ISO (YYYY-MM-DD) for defaulting the "Date Received" popup.
 function todayIso() {
@@ -39,9 +36,6 @@ function DateReceivedForm({ dateRef, poId }) {
 }
 
 export default function POTable({ tableId, pos, isSG, showShip, upsertPO, deletePO, showModal, closeModal }) {
-  const [trackingInfo, setTrackingInfo] = useState({})
-  const [loadingTracking, setLoadingTracking] = useState({})
-
   const rows = pos
     .filter(p => p.table_id === tableId)
     .filter(p => p.status !== 'Complete')
@@ -53,42 +47,7 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
     })
   const total = rows.reduce((s, p) => s + (p.po_value || 0), 0)
 
-  useEffect(() => {
-    rows.forEach(async p => {
-      if (p.tracking_number && !trackingInfo[p.id] && !loadingTracking[p.id]) {
-        setLoadingTracking(prev => ({ ...prev, [p.id]: true }))
-        const info = await getTracking(p.tracking_number, p.carrier_slug)
-        if (info) {
-          setTrackingInfo(prev => ({ ...prev, [p.id]: info }))
-          // Overwrite PO's eta whenever tracking returns a different date.
-          const iso = extractIsoDate(info.eta)
-          if (iso && iso !== p.eta) upsertPO({ ...p, eta: iso })
-        }
-        setLoadingTracking(prev => ({ ...prev, [p.id]: false }))
-      }
-    })
-  }, [rows.map(r => r.id + (r.tracking_number || '')).join(',')])
-
   const update = (p, field, val) => upsertPO({ ...p, [field]: val ?? null })
-
-  const handleTrackingSubmit = async (p, trackingNumber, carrierCode) => {
-    if (!trackingNumber) return
-    const finalCarrier = carrierCode || '0'
-    await upsertPO({ ...p, tracking_number: trackingNumber, carrier_slug: finalCarrier })
-    await registerTracking(trackingNumber, finalCarrier)
-    setLoadingTracking(prev => ({ ...prev, [p.id]: true }))
-    const info = await getTracking(trackingNumber, finalCarrier)
-    if (info) {
-      setTrackingInfo(prev => ({ ...prev, [p.id]: info }))
-      // Always overwrite p.eta when tracking returns an eta, even if a manual
-      // one was already there — tracking is the source of truth.
-      const iso = extractIsoDate(info.eta)
-      if (iso) {
-        await upsertPO({ ...p, tracking_number: trackingNumber, carrier_slug: finalCarrier, eta: iso })
-      }
-    }
-    setLoadingTracking(prev => ({ ...prev, [p.id]: false }))
-  }
 
   const handleStatus = (p, val) => {
     if (val === 'Delete') {
@@ -133,9 +92,9 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
 
   // Column count tracker so footer/add-row colspans line up correctly.
   // Fixed columns: Supplier, PO #, Status, Dest, Order Date, ETA, PO Value,
-  //                Tracking, Notes, Docs, Est. Receive Date  (11)
+  //                Notes, Docs, Est. Receive Date  (10)
   // Optional:     + Product (if isSG), + FCL/LCL (if showShip)
-  const columnCount = 11 + (isSG ? 1 : 0) + (showShip ? 1 : 0)
+  const columnCount = 10 + (isSG ? 1 : 0) + (showShip ? 1 : 0)
 
   return (
     <div>
@@ -152,7 +111,6 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <th style={thS}>Order Date</th>
               <th style={thS}>ETA</th>
               <th style={thS}>PO Value</th>
-              <th style={{ ...thS, minWidth: 220 }}>Tracking</th>
               {showShip && <th style={thS}>FCL / LCL</th>}
               <th style={{ ...thS, minWidth: 160 }}>Notes</th>
               <th style={{ ...thS, minWidth: 200 }}>Docs</th>
@@ -169,8 +127,6 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               const isDraft = (p.status || 'Draft') === 'Draft'
               const sc2 = statusColor(p.status)
               const db = p.dest === 'AWD' || p.dest === 'RT AWD' ? { bg: '#E6F1FB', fc: '#0C447C' } : p.dest === 'FBA' ? { bg: '#EEEDFE', fc: '#3C3489' } : { bg: '#F1EFE8', fc: '#444441' }
-              const liveInfo = trackingInfo[p.id]
-              const isLoading = loadingTracking[p.id]
 
               return (
                 <tr key={p.id} style={{ background: sc.bg + '18', borderBottom: '1px solid #f0f0f0' }}>
@@ -200,24 +156,11 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
                   </td>
                   <td style={tdS}>
                     <input key={p.eta || 'none'} type="date" defaultValue={p.eta || ''} onBlur={e => update(p, 'eta', e.target.value)} style={dateInputS} />
-                    {liveInfo?.eta && extractIsoDate(liveInfo.eta) && <div style={{ fontSize: 9, color: '#27500A', marginTop: 2 }}>📡 from tracking</div>}
                   </td>
                   <td style={{ ...tdS, fontSize: 11 }}>
                     {isDraft
                       ? <input type="number" defaultValue={p.po_value || ''} onBlur={e => update(p, 'po_value', e.target.value ? +e.target.value : null)} style={numInputS} placeholder="0.00" />
                       : fmtMoney(p.po_value)}
-                  </td>
-                  <td style={{ ...tdS, minWidth: 220 }}>
-                    <TrackingCell
-                      po={p}
-                      liveInfo={liveInfo}
-                      isLoading={isLoading}
-                      onSubmit={handleTrackingSubmit}
-                      onClear={() => {
-                        upsertPO({ ...p, tracking_number: null, carrier_slug: null })
-                        setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n })
-                      }}
-                    />
                   </td>
                   {showShip && (
                     <td style={{ ...tdS, minWidth: 120 }}>
@@ -266,113 +209,14 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
               <td style={tdS}><input type="date" style={addInpS} value={addRow.order_date} onChange={e => setAddRow(r => ({...r, order_date: e.target.value}))} /></td>
               <td style={tdS}><input type="date" style={addInpS} value={addRow.eta} onChange={e => setAddRow(r => ({...r, eta: e.target.value}))} /></td>
               <td style={tdS}><input type="number" style={{ ...addInpS, width: 88 }} placeholder="Value $" value={addRow.po_value} onChange={e => setAddRow(r => ({...r, po_value: e.target.value}))} /></td>
-              <td style={tdS}><button style={{ padding: '5px 10px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }} onClick={submitAdd}>+ Add</button></td>
               {showShip && <td style={tdS} />}
               <td style={tdS} />
               <td style={tdS} />
-              <td style={tdS} />
+              <td style={tdS}><button style={{ padding: '5px 10px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 5, fontSize: 11, fontWeight: 500, cursor: 'pointer' }} onClick={submitAdd}>+ Add</button></td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
-  )
-}
-
-function TrackingCell({ po, liveInfo, isLoading, onSubmit, onClear }) {
-  const [trackNum, setTrackNum] = useState(po.tracking_number || '')
-  const [carrier, setCarrier] = useState(po.carrier_slug || '')
-  const [showEvents, setShowEvents] = useState(false)
-  const [autoDetected, setAutoDetected] = useState(null)
-
-  const handleNumberChange = (val) => {
-    setTrackNum(val)
-    const detected = detectCarrier(val)
-    if (detected) {
-      setAutoDetected(detected)
-      setCarrier(detected.code)
-    } else {
-      setAutoDetected(null)
-    }
-  }
-
-  const hasTracking = po.tracking_number
-  const carrierName = CARRIERS.find(c => c.code === (po.carrier_slug || carrier))?.name || po.carrier_slug
-
-  if (hasTracking) {
-    return (
-      <div style={{ fontSize: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
-          <span style={{ background: '#E6F1FB', color: '#0C447C', fontSize: 9, padding: '1px 6px', borderRadius: 8, fontWeight: 600 }}>{carrierName}</span>
-          <span style={{ fontFamily: 'monospace', color: '#333', fontWeight: 600 }}>{po.tracking_number}</span>
-        </div>
-        {isLoading && <div style={{ color: '#888', fontStyle: 'italic', fontSize: 9 }}>Fetching status…</div>}
-        {liveInfo && (
-          <div>
-            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: liveInfo.statusStyle.bg, color: liveInfo.statusStyle.color }}>
-              {liveInfo.statusLabel}
-            </span>
-            {liveInfo.lastLocation && <div style={{ color: '#555', marginTop: 2, fontSize: 9 }}>📍 {liveInfo.lastLocation}</div>}
-            {liveInfo.lastTime && <div style={{ color: '#888', fontSize: 9 }}>{liveInfo.lastTime}</div>}
-            {liveInfo.events?.length > 0 && (
-              <button onClick={() => setShowEvents(v => !v)} style={{ fontSize: 9, color: '#0C447C', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 2 }}>
-                {showEvents ? 'Hide history' : `${liveInfo.events.length} updates`}
-              </button>
-            )}
-            {showEvents && (
-              <div style={{ marginTop: 4, borderTop: '1px solid #eee', paddingTop: 4, maxHeight: 120, overflowY: 'auto' }}>
-                {liveInfo.events.map((ev, i) => (
-                  <div key={i} style={{ marginBottom: 4 }}>
-                    <div style={{ fontWeight: 500, color: '#333' }}>{ev.time}</div>
-                    {ev.location && <div style={{ color: '#666' }}>📍 {ev.location}</div>}
-                    {ev.message && <div style={{ color: '#888', fontSize: 9 }}>{ev.message}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {!liveInfo && !isLoading && (
-          <div style={{ color: '#888', fontSize: 9, fontStyle: 'italic' }}>
-            {process.env.REACT_APP_17TRACK_API_KEY ? 'No status yet' : 'Add 17TRACK key for live status'}
-          </div>
-        )}
-        <button onClick={onClear} style={{ fontSize: 9, color: '#A32D2D', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', marginTop: 3 }}>remove</button>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <input
-        type="text"
-        placeholder="Paste tracking number"
-        value={trackNum}
-        onChange={e => handleNumberChange(e.target.value)}
-        style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
-      />
-      <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-        <select
-          style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4, flex: 1 }}
-          value={carrier}
-          onChange={e => setCarrier(e.target.value)}
-        >
-          <option value=''>Carrier (auto-detect)</option>
-          {CARRIERS.filter(c => c.code !== '0').map(c => <option key={c.code + c.name} value={c.code}>{c.name}</option>)}
-        </select>
-        <button
-          onClick={() => onSubmit(po, trackNum, carrier)}
-          disabled={!trackNum}
-          style={{ fontSize: 10, padding: '3px 8px', background: trackNum ? '#1F3864' : '#ccc', color: '#fff', border: 'none', borderRadius: 4, cursor: trackNum ? 'pointer' : 'default', whiteSpace: 'nowrap' }}
-        >
-          Track
-        </button>
-      </div>
-      {autoDetected && (
-        <div style={{ fontSize: 9, color: '#27500A', background: '#EAF3DE', padding: '2px 6px', borderRadius: 4 }}>
-          ✓ Auto-detected: {autoDetected.name}
-        </div>
-      )}
     </div>
   )
 }
