@@ -59,6 +59,11 @@ function MainApp({ session }) {
   const store = useStore()
   const [activeTab, setActiveTab] = useState('Control')
   const [modal, setModal] = useState(null)
+  // Free-text PO search. Lifted up here (instead of per-tab) so the query
+  // persists across tab changes — common workflow is "paste tracking #, check
+  // BB Receiving, then flip to AWD/FBA, same query still applied". Each PO
+  // tab renders a SearchBox bound to this state and filters its row list.
+  const [searchQuery, setSearchQuery] = useState('')
 
   const months = buildMonths(store.monthStart)
   const showModal = useCallback((m) => setModal(m), [])
@@ -157,27 +162,32 @@ function MainApp({ session }) {
         )}
         {activeTab === 'BB Receiving' && (
           <ReceivingTab pos={store.pos} upsertPO={store.upsertPO} deletePO={store.deletePO}
-            showModal={showModal} closeModal={closeModal} />
+            showModal={showModal} closeModal={closeModal}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         )}
         {activeTab === 'AWD/FBA Receiving' && (
         <AWDTab
           pos={store.pos} upsertPO={store.upsertPO} deletePO={store.deletePO}
           showModal={showModal} closeModal={closeModal}
+          searchQuery={searchQuery} setSearchQuery={setSearchQuery}
         />
       )}
       {activeTab === 'RT' && (
           <RTTab pos={store.pos} calState={store.calState} rtConfig={store.rtConfig}
             months={months} upsertPO={store.upsertPO} deletePO={store.deletePO}
-            upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal} />
+            upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         )}
         {activeTab === 'SG' && (
           <SGTab pos={store.pos} calState={store.calState} sgConfig={store.sgConfig}
             months={months} upsertPO={store.upsertPO} deletePO={store.deletePO}
-            upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal} />
+            upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         )}
         {activeTab === "Completed PO's" && (
           <CompletedTab pos={store.pos} upsertPO={store.upsertPO} deletePO={store.deletePO}
-            showModal={showModal} closeModal={closeModal} />
+            showModal={showModal} closeModal={closeModal}
+            searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         )}
       </div>
 

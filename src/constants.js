@@ -128,3 +128,58 @@ export function buildMonths(startDate) {
 export function shortMonth(d) {
   return d.toLocaleString('en-US', { month: 'short' }) + "'" + String(d.getFullYear()).slice(2)
 }
+
+// ---------------------------------------------------------------------------
+// Free-text search helpers
+// ---------------------------------------------------------------------------
+// normalizeQuery — trim and lowercase; an empty query means "no filter".
+export function normalizeQuery(q) {
+  return (q || '').trim().toLowerCase()
+}
+
+// searchMatchesPO — does any top-level PO field contain the query?
+// Searched fields: id, supplier, dest, product, status, entity, table_id,
+// tracking_number, carrier_slug, notes. Case-insensitive substring.
+// Returns false if q is empty (caller decides what to do).
+export function searchMatchesPO(po, q) {
+  const needle = normalizeQuery(q)
+  if (!needle) return false
+  if (!po) return false
+  const fields = [
+    po.id, po.supplier, po.dest, po.product, po.status,
+    po.entity, po.table_id, po.tracking_number, po.carrier_slug, po.notes,
+  ]
+  for (const f of fields) {
+    if (f == null) continue
+    if (String(f).toLowerCase().includes(needle)) return true
+  }
+  return false
+}
+
+// searchMatchesContainer — does any container field contain the query?
+// Fields: name, tracking_number, carrier_slug, notes. Case-insensitive.
+export function searchMatchesContainer(c, q) {
+  const needle = normalizeQuery(q)
+  if (!needle) return false
+  if (!c) return false
+  const fields = [c.name, c.tracking_number, c.carrier_slug, c.notes]
+  for (const f of fields) {
+    if (f == null) continue
+    if (String(f).toLowerCase().includes(needle)) return true
+  }
+  return false
+}
+
+// searchMatchesAnyContainer — true if any container in the list matches.
+export function searchMatchesAnyContainer(containers, q) {
+  if (!normalizeQuery(q)) return false
+  if (!containers || !containers.length) return false
+  return containers.some(c => searchMatchesContainer(c, q))
+}
+
+// searchMatchesPOOrContainers — combined check used to filter row lists.
+// Returns true when either the PO itself or any of its containers matches.
+export function searchMatchesPOOrContainers(po, containers, q) {
+  if (!normalizeQuery(q)) return true // empty query means "show everything"
+  return searchMatchesPO(po, q) || searchMatchesAnyContainer(containers, q)
+}
