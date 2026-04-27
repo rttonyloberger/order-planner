@@ -39,12 +39,39 @@ export const RT_SUPPLIERS = [
   'WEIGHT CO','JXL','Weihai Huayue Sports','XINGTAI XIOU IMPORT'
 ]
 
-export const TODAY = new Date(2026, 3, 14) // Update this to new Date() for production
+// "Today" — always live. Normalized to local midnight so daysUntil() returns
+// whole-day counts (no fractional rounding caused by the current time of day).
+// Computed at module load for things like calendar month-highlighting; the
+// daysUntil function below uses a fresh today() on every call so the
+// "in Nd" countdown stays accurate even if the app stays open across midnight.
+function todayMidnight() {
+  const n = new Date()
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate())
+}
 
+export const TODAY = todayMidnight()
+
+// Number of whole days from today to the given ETA. Negative = overdue.
+// Always recomputes "today" so the countdown advances with the calendar
+// without needing a page reload.
 export function daysUntil(eta) {
   if (!eta) return null
-  const d = typeof eta === 'string' ? new Date(eta) : eta
-  return Math.round((d - TODAY) / 86400000)
+  const raw = typeof eta === 'string' ? new Date(eta) : eta
+  if (isNaN(raw)) return null
+  // Normalize the eta to midnight too — otherwise a Date built from a
+  // date-only ISO string ("2026-06-08") gets parsed as UTC midnight, which
+  // can land on the previous local day after timezone conversion. Pulling
+  // year/month/day out of the parsed Date and re-anchoring at local midnight
+  // avoids that off-by-one.
+  let etaMid
+  if (typeof eta === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(eta)) {
+    const [y, m, d] = eta.split('-').map(Number)
+    etaMid = new Date(y, m - 1, d)
+  } else {
+    etaMid = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate())
+  }
+  const today = todayMidnight()
+  return Math.round((etaMid - today) / 86400000)
 }
 
 export function arrivalColor(days) {
