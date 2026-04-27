@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
-import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
+import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers, searchMatchesAnyContainer, normalizeQuery } from '../constants'
 import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
+import SearchBox from './SearchBox'
 
 function safeStr(val) {
   if (val == null) return ''
@@ -303,8 +304,15 @@ export function AWDPORow({
   hideDest = false,
   requireMultipleToExpand = false,
   preloadedContainers,
+  // forceExpanded — when true, render the row as if the user clicked to
+  // expand it. Used by search: a query that matches a container field
+  // (tracking #, notes, etc.) auto-pops the panel so the matching container
+  // is visible without the user having to click. Goes back to normal when
+  // the search clears.
+  forceExpanded = false,
 }) {
   const [expanded, setExpanded] = useState(false)
+  const effectiveExpanded = expanded || forceExpanded
   const [containers, setContainers] = useState(preloadedContainers || [])
   const [loadingContainers, setLoadingContainers] = useState(false)
 
@@ -427,7 +435,7 @@ export function AWDPORow({
 
   return (
     <>
-      <tr style={{ background: sc.bg + '18', borderBottom: expanded ? 'none' : '1px solid #f0f0f0', cursor: rowClickable ? 'pointer' : 'default' }}
+      <tr style={{ background: sc.bg + '18', borderBottom: effectiveExpanded ? 'none' : '1px solid #f0f0f0', cursor: rowClickable ? 'pointer' : 'default' }}
         onClick={rowClickable ? () => setExpanded(e => !e) : undefined}>
         <td style={{ ...tdS, fontWeight: 700, background: sc.bg, color: sc.fc, borderLeft: `3px solid ${sc.b}`, textAlign: 'left', minWidth: 140 }}>
           <div>{safeStr(po.supplier)}</div>
@@ -438,7 +446,7 @@ export function AWDPORow({
                 style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#1F3864', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 title="Show per-container tracking, notes, docs and receive dates"
               >
-                {expanded ? '▼' : '▶'} {containers.length} container{containers.length > 1 ? 's' : ''}
+                {effectiveExpanded ? '▼' : '▶'} {containers.length} container{containers.length > 1 ? 's' : ''}
               </button>
             ) : (
               <button
@@ -551,7 +559,7 @@ export function AWDPORow({
       </tr>
 
       {/* Expanded containers panel (only in views that allow expansion) */}
-      {expanded && allowContainerExpand && (
+      {effectiveExpanded && allowContainerExpand && (
         <tr>
           <td colSpan={colSpanForExpansion} style={{ padding: '12px 20px 16px', background: '#f0f6fb', borderBottom: '2px solid #b7d0e2' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -622,6 +630,11 @@ export function AWDPOTable({
   requireMultipleToExpand = false,
   showModal, closeModal,
   emptyMessage = 'No open POs.',
+  // searchQuery — when set, rows are further filtered to those whose PO
+  // fields or any container's fields contain the query (case-insensitive).
+  // Empty / undefined = no filtering. Container-only matches force-expand
+  // the row so the user can see what matched.
+  searchQuery = '',
 }) {
   // Bulk-load every container for the POs this table renders. Lets us sort
   // by the effective receive date (earliest container eta or fallback to the
@@ -667,7 +680,7 @@ export function AWDPOTable({
     return best || p.eta || null
   }
 
-  const awdPos = tablePosAll
+  const awdPosSorted = tablePosAll
     .slice()
     .sort((a, b) => {
       if (showCompleted) {
@@ -688,6 +701,14 @@ export function AWDPOTable({
       if (!be) return -1
       return new Date(ae) - new Date(be)
     })
+
+  // Apply free-text search. Empty query passes everything through. We use
+  // containerMap (already loaded above) so a tracking number that lives only
+  // on a container still surfaces its parent row.
+  const awdPos = awdPosSorted.filter(p =>
+    searchMatchesPOOrContainers(p, containerMap[p.id], searchQuery)
+  )
+
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
   const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 
@@ -711,17 +732,29 @@ export function AWDPOTable({
         </thead>
         <tbody>
           {awdPos.length === 0 && (
-            <tr><td colSpan={colCount} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>{emptyMessage}</td></tr>
+            <tr><td colSpan={colCount} style={{ padding: 30, textAlign: 'center', color: '#888', fontSize: 12 }}>
+              {normalizeQuery(searchQuery) && awdPosSorted.length > 0
+                ? `No POs match "${searchQuery}"`
+                : emptyMessage}
+            </td></tr>
           )}
-          {awdPos.map(p => (
-            <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
-              destOptions={destOptions} showModal={showModal} closeModal={closeModal}
-              allowContainerExpand={allowContainerExpand}
-              readOnlyStatus={readOnlyStatus}
-              hideDest={hideDest}
-              requireMultipleToExpand={requireMultipleToExpand}
-              preloadedContainers={containerMap[p.id]} />
-          ))}
+          {awdPos.map(p => {
+            // Force-expand the row when the search query matches via a
+            // container field — that way the user immediately sees which
+            // container surfaced the result without an extra click.
+            const containerMatch = !!normalizeQuery(searchQuery) &&
+              searchMatchesAnyContainer(containerMap[p.id], searchQuery)
+            return (
+              <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
+                destOptions={destOptions} showModal={showModal} closeModal={closeModal}
+                allowContainerExpand={allowContainerExpand}
+                readOnlyStatus={readOnlyStatus}
+                hideDest={hideDest}
+                requireMultipleToExpand={requireMultipleToExpand}
+                preloadedContainers={containerMap[p.id]}
+                forceExpanded={containerMatch} />
+            )
+          })}
           {awdPos.length > 0 && (
             <tr style={{ background: '#f5f5f5', borderTop: '2px solid #ddd' }}>
               <td colSpan={colCount - 1} style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
@@ -806,7 +839,7 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
 // Default export: the AWD/FBA Receiving tab. Add-PO has been removed per
 // Tony's round-7 request — new AWD/FBA POs are now added from the SG and RT
 // tabs directly (using AddAWDPORow there).
-export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
+export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
   // Receiving tabs only show committed POs. Drafts are still editable on
   // the RT / SG tabs but the warehouse shouldn't see them.
   const awdPos = pos
@@ -816,20 +849,24 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal 
   return (
     <div>
       {/* Header */}
-      <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Receiving</h2>
           <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
         </div>
-        <div style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
-          <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>
-          <div style={{ color: '#000', fontSize: 10 }}>Open POs</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <SearchBox value={searchQuery} onChange={setSearchQuery} />
+          <div style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
+            <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>
+            <div style={{ color: '#000', fontSize: 10 }}>Open POs</div>
+          </div>
         </div>
       </div>
 
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        readOnlyStatus={true} hideDrafts={true} />
+        readOnlyStatus={true} hideDrafts={true}
+        searchQuery={searchQuery} />
     </div>
   )
 }

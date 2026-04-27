@@ -2,12 +2,13 @@ import React from 'react'
 import { SGS_COLORS, SG_PRODUCTS, projectedOrders, shortMonth, TODAY } from '../constants'
 import OrderCalendar from './OrderCalendar'
 import { AWDPOTable, AddAWDPORow } from './AWDTab'
+import SearchBox from './SearchBox'
 
 // SG currently orders from a single overseas supplier. Keeping the list here
 // so both BB and AWD/FBA add-PO rows offer the same dropdown.
 const SG_SUPPLIERS = ['CNBM INTERNATIONAL']
 
-export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
+export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
   const products = sgConfig.map(c => ({
     name: c.name,
     last: c.last_order_date,
@@ -16,6 +17,11 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
 
   return (
     <div>
+      {/* Search bar — filters both SG-BB and SG-AWD/FBA tables on this tab. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 6 }}>
+        <SearchBox value={searchQuery} onChange={setSearchQuery} />
+      </div>
+
       <div style={secStyle}>Projected order calendar</div>
       <Legend items={products.map(s => ({ c: (SGS_COLORS[s.name] || {}).b || '#999', l: s.name }))} />
       <OrderCalendar suppliers={products} styleMap={SGS_COLORS} calState={calState} months={months}
@@ -30,7 +36,8 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       <ArrivalLegend />
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['sg-bb']} destOptions={['BB']} entityFilter="SG" />
+        tableIds={['sg-bb']} destOptions={['BB']} entityFilter="SG"
+        searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="sg-bb"
         entity="SG"
@@ -50,7 +57,8 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       {/* Shared AWD/FBA table, filtered to SG entity */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG" />
+        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG"
+        searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="sg-awdfba"
         entity="SG"

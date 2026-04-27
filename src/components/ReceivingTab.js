@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
-import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney } from '../constants'
+import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers } from '../constants'
+import SearchBox from './SearchBox'
 import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
@@ -156,7 +157,7 @@ function fmtTrackDate(val) {
   }
 }
 
-export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, closeModal }) {
+export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
   const [trackingInfo, setTrackingInfo] = useState({})
   const [loadingIds, setLoadingIds] = useState(new Set())
   const [lastRefresh, setLastRefresh] = useState(null)
@@ -182,7 +183,10 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
 
   // Receiving tab shows only Committed POs. Drafts stay editable on the
   // RT / SG tabs, but the warehouse team shouldn't see them here.
-  const bbPos = pos
+  // bbPosBeforeSearch is the pre-search list (used for header counters and
+  // the bulk container loader so search doesn't churn it). bbPos below is
+  // the filtered list actually rendered.
+  const bbPosBeforeSearch = pos
     .filter(p => p.dest === 'BB' && p.status !== 'Complete' && p.status !== 'Draft')
     .sort((a, b) => {
       if (!a.eta && !b.eta) return 0
@@ -193,10 +197,11 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
 
   // Bulk-load containers for every BB PO shown in this tab so each row can
   // render its container count inline and expand to show per-container ETAs.
+  // Keyed off the unfiltered list so search doesn't trigger reloads.
   useEffect(() => {
     async function loadAllContainers() {
-      if (bbPos.length === 0) { setContainerMap({}); return }
-      const ids = bbPos.map(p => p.id)
+      if (bbPosBeforeSearch.length === 0) { setContainerMap({}); return }
+      const ids = bbPosBeforeSearch.map(p => p.id)
       const { data } = await supabase.from('awd_containers').select('*').in('po_id', ids).order('container_num')
       const byPO = {}
       for (const c of (data || [])) {
@@ -206,7 +211,14 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       setContainerMap(byPO)
     }
     loadAllContainers()
-  }, [bbPos.map(p => p.id).join(',')])
+  }, [bbPosBeforeSearch.map(p => p.id).join(',')])
+
+  // Apply the free-text search filter. Matches against PO fields (id, supplier,
+  // tracking #, notes, etc.) and any container's fields (tracking #, notes,
+  // name). Empty query = pass everything through.
+  const bbPos = bbPosBeforeSearch.filter(p =>
+    searchMatchesPOOrContainers(p, containerMap[p.id], searchQuery)
+  )
 
   const loadOne = useCallback(async (po) => {
     if (!po.tracking_number) return
@@ -228,17 +240,19 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   }, [upsertPO])
 
   useEffect(() => {
-    const withTracking = bbPos.filter(p => p.tracking_number)
+    // Tracking refresh runs against the unfiltered list so search doesn't
+    // suppress refreshes for hidden rows.
+    const withTracking = bbPosBeforeSearch.filter(p => p.tracking_number)
     withTracking.forEach(po => { if (!trackingInfo[po.id]) loadOne(po) })
     if (withTracking.length) setLastRefresh(new Date())
-  }, [bbPos.map(p => p.id).join(',')])
+  }, [bbPosBeforeSearch.map(p => p.id).join(',')])
 
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true)
-    for (const po of bbPos.filter(p => p.tracking_number)) await loadOne(po)
+    for (const po of bbPosBeforeSearch.filter(p => p.tracking_number)) await loadOne(po)
     setLastRefresh(new Date())
     setRefreshing(false)
-  }, [bbPos, loadOne])
+  }, [bbPosBeforeSearch, loadOne])
 
   // Keep "in Nd" / ETA fresh: re-fetch tracking every 10 minutes while the
   // tab is visible and whenever the window regains focus. daysUntil(p.eta)
@@ -246,20 +260,20 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   // with periodic eta syncs from 17TRACK prevents the stale "in 17d" problem.
   useEffect(() => {
     const id = setInterval(() => {
-      if (document.visibilityState === 'visible' && bbPos.some(p => p.tracking_number)) {
+      if (document.visibilityState === 'visible' && bbPosBeforeSearch.some(p => p.tracking_number)) {
         handleRefreshAll()
       }
     }, 10 * 60 * 1000)
     return () => clearInterval(id)
-  }, [handleRefreshAll, bbPos])
+  }, [handleRefreshAll, bbPosBeforeSearch])
 
   useEffect(() => {
     const onFocus = () => {
-      if (bbPos.some(p => p.tracking_number)) handleRefreshAll()
+      if (bbPosBeforeSearch.some(p => p.tracking_number)) handleRefreshAll()
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [handleRefreshAll, bbPos])
+  }, [handleRefreshAll, bbPosBeforeSearch])
 
   const update = (po, field, val) => upsertPO({ ...po, [field]: val || null })
 
@@ -371,8 +385,11 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     }
   }, [containerMap, containerTrackingFetched, containerLoadingIds, loadContainerOne])
 
-  const arriving30 = bbPos.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
-  const totalVal = bbPos.reduce((s, p) => s + (p.po_value || 0), 0)
+  // Header counters always reflect the full open-PO universe (not the search-
+  // filtered subset), so the "Open POs" / "Arriving ≤30d" bubbles stay an
+  // accurate operational gut check while search narrows just the table below.
+  const arriving30 = bbPosBeforeSearch.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
+  const totalVal = bbPosBeforeSearch.reduce((s, p) => s + (p.po_value || 0), 0)
 
   return (
     <div>
@@ -393,8 +410,14 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <SearchBox
+            value={searchQuery}
+            onChange={setSearchQuery}
+            matchCount={bbPos.length}
+            totalCount={bbPosBeforeSearch.length}
+          />
           {[
-            { num: bbPos.length, lbl: 'Open POs' },
+            { num: bbPosBeforeSearch.length, lbl: 'Open POs' },
             { num: arriving30, lbl: 'Arriving ≤30d' },
           ].map(s => (
             <div key={s.lbl} style={{ background: 'rgba(255,255,255,.35)', borderRadius: 8, padding: '8px 14px', textAlign: 'center', minWidth: 72 }}>
@@ -409,7 +432,11 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       </div>
 
       {bbPos.length === 0
-        ? <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>No open BB shipments</div>
+        ? <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>
+            {bbPosBeforeSearch.length === 0
+              ? 'No open BB shipments'
+              : `No POs match "${searchQuery}"`}
+          </div>
         : (
           <div style={{ overflowX: 'auto', border: '1px solid #ddd', borderRadius: 8 }}>
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>

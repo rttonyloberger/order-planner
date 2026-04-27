@@ -2,12 +2,13 @@ import React from 'react'
 import { SUPP_COLORS, RT_PRODUCTS } from '../constants'
 import OrderCalendar from './OrderCalendar'
 import { AWDPOTable, AddAWDPORow } from './AWDTab'
+import SearchBox from './SearchBox'
 
 // Suppliers list used by the RT add-PO rows. Matches the list in SGTab
 // so both BB and AWD add-rows offer the same dropdown.
 const RT_SUPPLIERS = ['Dongyang Shanye Fishing','I-Lure','Sourcepro','WEIGHT CO','JXL','Weihai Huayue Sports','XINGTAI XIOU IMPORT']
 
-export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal }) {
+export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
   const suppliers = rtConfig.map(c => ({
     name: c.name,
     last: c.last_order_date,
@@ -16,6 +17,12 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
 
   return (
     <div>
+      {/* Search bar — filters both the BB and AWD/FBA AWDPOTable instances
+          on this tab. Sits above the calendar so it's easy to find. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 6 }}>
+        <SearchBox value={searchQuery} onChange={setSearchQuery} />
+      </div>
+
       <div style={secStyle}>Projected order calendar</div>
       <Legend items={suppliers.map(s => ({ c: (SUPP_COLORS[s.name] || {}).b || '#999', l: s.name }))} />
       <OrderCalendar suppliers={suppliers} styleMap={SUPP_COLORS} calState={calState} months={months}
@@ -33,7 +40,8 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
           the Dest column because every row here is already BB. */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT" hideDest={true} />
+        tableIds={['rt-bb']} destOptions={['BB']} entityFilter="RT" hideDest={true}
+        searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="rt-bb"
         entity="RT"
@@ -54,7 +62,8 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       {/* Same expandable row+containers table as SG / AWD/FBA tab, filtered to RT. */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT" />
+        tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT"
+        searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="rt-awd"
         entity="RT"
