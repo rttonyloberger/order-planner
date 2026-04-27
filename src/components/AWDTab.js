@@ -427,11 +427,11 @@ export function AWDPORow({
 
   // Column counts for the row layout. Dest is dropped when hideDest is set.
   //   completed view: Supplier, PO #, Entity, [Dest,] Product, Status, Order Date,
-  //                   Boxes, Containers, Docs, Date Received          (11 / 10 cols)
+  //                   PO Value, Boxes, Containers, Docs, Date Received  (12 / 11 cols)
   //   open view:      Supplier, PO #, Entity, [Dest,] Product, Status, Order Date,
   //                   ETA, PO Value, Boxes, Containers, Notes, Docs,
   //                   Est. Receive Date                                (14 / 13 cols)
-  const colSpanForExpansion = (isComplete ? 11 : 14) - (hideDest ? 1 : 0)
+  const colSpanForExpansion = (isComplete ? 12 : 14) - (hideDest ? 1 : 0)
 
   return (
     <>
@@ -448,7 +448,11 @@ export function AWDPORow({
               >
                 {effectiveExpanded ? '▼' : '▶'} {containers.length} container{containers.length > 1 ? 's' : ''}
               </button>
-            ) : (
+            ) : !isComplete ? (
+              // Hide the "+ Split into containers" affordance on the Completed
+              // POs tab — once a PO is received there's no reason to add
+              // containers retroactively, and the button just clutters the
+              // archive.
               <button
                 onClick={async (e) => { e.stopPropagation(); await addContainer(); setExpanded(true) }}
                 style={{ marginTop: 4, fontSize: 9, padding: '2px 8px', background: '#fff', color: '#1F3864', border: '1px dashed #1F3864', borderRadius: 10, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}
@@ -456,7 +460,7 @@ export function AWDPORow({
               >
                 + Split into containers
               </button>
-            )
+            ) : null
           )}
         </td>
         <td style={{ ...tdS, fontFamily: 'monospace', fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>#{safeStr(po.id)}</td>
@@ -517,10 +521,10 @@ export function AWDPORow({
             )}
           </td>
         )}
-        {/* PO Value column — hidden on the Completed POs tab */}
-        {!isComplete && (
-          <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
-        )}
+        {/* PO Value column — shown in both open and completed views (round 21).
+            User asked for the per-PO dollar amount on the Completed tab but
+            explicitly NOT a combined total at the bottom of each section. */}
+        <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
         <td style={{ ...tdS, minWidth: 70, textAlign: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
             {totalBoxes > 0 ? totalBoxes : (po.box_count || '—')}
@@ -712,12 +716,14 @@ export function AWDPOTable({
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
   const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 
-  // Column headers — PO Value and Notes are dropped on the Completed tab per
-  // Tony's round-10 request. ETA is also hidden on the Completed tab. The
-  // last column is "Date Received" on the Completed tab and "Est. Receive
-  // Date" otherwise.
+  // Column headers — Notes is dropped on the Completed tab per Tony's
+  // round-10 request. ETA is also hidden on the Completed tab. PO Value
+  // shows on completed rows too (round 21) so the archive carries the
+  // dollar amount per row, just without the combined-total footer.
+  // The last column is "Date Received" on the Completed tab and
+  // "Est. Receive Date" otherwise.
   const headersFull = showCompleted
-    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','Boxes','Containers','Docs','Date Received']
+    ? ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','PO Value','Boxes','Containers','Docs','Date Received']
     : ['Supplier','PO #','Entity','Dest','Product','Status','Order Date','ETA','PO Value','Boxes','Containers','Notes','Docs','Est. Receive Date']
   const headers = hideDest ? headersFull.filter(h => h !== 'Dest') : headersFull
   const colCount = headers.length
