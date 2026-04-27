@@ -132,21 +132,29 @@ export function shortMonth(d) {
 // ---------------------------------------------------------------------------
 // Free-text search helpers
 // ---------------------------------------------------------------------------
-// normalizeQuery — trim and lowercase; an empty query means "no filter".
+// normalizeQuery — trim, lowercase, and strip a leading '#'.
+// The '#' strip lets users paste copy-pasted PO references like "#109283"
+// (or "# 109283") and still match a PO whose id is stored as "109283".
+// An empty result means "no filter".
 export function normalizeQuery(q) {
-  return (q || '').trim().toLowerCase()
+  let s = (q || '').trim().toLowerCase()
+  while (s.startsWith('#')) s = s.slice(1).trimStart()
+  return s
 }
 
 // searchMatchesPO — does any top-level PO field contain the query?
-// Searched fields: id, supplier, dest, product, status, entity, table_id,
-// tracking_number, carrier_slug, notes. Case-insensitive substring.
+// Searched fields: id, supplier, dest, product, product_type, status, entity,
+// table_id, tracking_number, carrier_slug, notes. Case-insensitive substring.
+// product_type is the actual schema field used by the row UI ("Woven",
+// "Non-Woven", "Fishing Line", etc.) — both are listed so legacy or future
+// renames don't break search.
 // Returns false if q is empty (caller decides what to do).
 export function searchMatchesPO(po, q) {
   const needle = normalizeQuery(q)
   if (!needle) return false
   if (!po) return false
   const fields = [
-    po.id, po.supplier, po.dest, po.product, po.status,
+    po.id, po.supplier, po.dest, po.product, po.product_type, po.status,
     po.entity, po.table_id, po.tracking_number, po.carrier_slug, po.notes,
   ]
   for (const f of fields) {
