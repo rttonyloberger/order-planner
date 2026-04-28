@@ -105,26 +105,55 @@ export function useStore() {
     if (error) console.error('last_order_date auto-update error:', error)
   }, [rtConfig, sgConfig])
 
+  // Round 26 — surface save errors instead of silently logging them. Tony was
+  // hitting Add PO and the row was vanishing into the abyss; turns out the
+  // upsert was rejected (most commonly: an unknown column or NOT NULL
+  // violation) but the only signal was console.error. This wraps every write
+  // so failures pop a clear alert with the Postgres error message — no more
+  // silent failures.
+  const surfaceError = (label, error) => {
+    console.error(`${label} error:`, error)
+    const msg = error?.message || error?.details || error?.hint || JSON.stringify(error)
+    // Use queueMicrotask so the alert fires after React's current render flush.
+    queueMicrotask(() => {
+      // eslint-disable-next-line no-alert
+      alert(`Couldn't save (${label}).\n\n${msg}\n\nLet Claude know what this says.`)
+    })
+  }
+
+  // Strip any client-only or computed fields before sending to Postgres. The
+  // pos array we receive from supabase has exactly the table's columns, but
+  // when the row UI builds an update payload it sometimes spreads `...po`
+  // which already includes `updated_at`. We always overwrite that, but keep
+  // this defensive whitelist-by-omission in case a stray field sneaks in
+  // later (like a UI-derived `__expanded` flag).
+  const cleanPOPayload = (po) => {
+    const { __expanded, ...rest } = po || {}
+    return rest
+  }
+
   // Actions
   const upsertPO = useCallback(async (po) => {
-    const { error } = await supabase.from('purchase_orders').upsert({
-      ...po, updated_at: new Date().toISOString()
-    })
-    if (error) console.error('upsertPO error:', error)
+    const payload = { ...cleanPOPayload(po), updated_at: new Date().toISOString() }
+    const { error } = await supabase.from('purchase_orders').upsert(payload)
+    if (error) {
+      surfaceError('upsertPO', error)
+      return
+    }
     // Fire-and-forget: bump the supplier's last_order_date if the new PO is newer.
     maybeAdvanceLastOrderDate(po)
   }, [maybeAdvanceLastOrderDate])
 
   const deletePO = useCallback(async (id) => {
     const { error } = await supabase.from('purchase_orders').delete().eq('id', id)
-    if (error) console.error('deletePO error:', error)
+    if (error) surfaceError('deletePO', error)
   }, [])
 
   const upsertCalState = useCallback(async (key, data) => {
     const { error } = await supabase.from('calendar_state').upsert({
       key, ...data, updated_at: new Date().toISOString()
     })
-    if (error) console.error('upsertCalState error:', error)
+    if (error) surfaceError('upsertCalState', error)
   }, [])
 
   const updateRTConfig = useCallback(async (id, changes) => {
