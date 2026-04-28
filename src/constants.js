@@ -84,7 +84,22 @@ export function arrivalColor(days) {
 
 export function fmtDate(d) {
   if (!d) return 'TBD'
-  const dt = typeof d === 'string' ? new Date(d) : d
+  // Date-only ISO strings ("2026-06-08") parse as UTC midnight, which lands
+  // on the previous local day for any user behind UTC (e.g. US Eastern).
+  // That was making the displayed ETA / Order Date appear one day before
+  // the value the user actually picked. Re-anchor to local midnight using
+  // the parsed Y/M/D so the display matches what was entered.
+  let dt
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const [y, m, day] = d.split('-').map(Number)
+    dt = new Date(y, m - 1, day)
+  } else if (typeof d === 'string') {
+    const raw = new Date(d)
+    if (isNaN(raw)) return 'TBD'
+    dt = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate())
+  } else {
+    dt = d
+  }
   if (isNaN(dt)) return 'TBD'
   return `${dt.getMonth()+1}/${dt.getDate()}/${dt.getFullYear()}`
 }
