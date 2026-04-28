@@ -531,8 +531,25 @@ export function AWDPORow({
         )}
         {/* PO Value column — shown in both open and completed views (round 21).
             User asked for the per-PO dollar amount on the Completed tab but
-            explicitly NOT a combined total at the bottom of each section. */}
-        <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>{fmtMoney(po.po_value)}</td>
+            explicitly NOT a combined total at the bottom of each section.
+            Round 26 — editable in Draft mode (same pattern as Order Date and
+            ETA above) so users can correct the value before committing.
+            Read-only otherwise. */}
+        <td style={{ ...tdS, fontSize: 11 }} onClick={e => e.stopPropagation()}>
+          {isDraft ? (
+            <input
+              key={po.po_value ?? 'none-pv'}
+              type="number"
+              step="0.01"
+              defaultValue={po.po_value ?? ''}
+              onBlur={e => update('po_value', e.target.value ? +e.target.value : null)}
+              style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 90 }}
+              placeholder="0.00"
+            />
+          ) : (
+            fmtMoney(po.po_value)
+          )}
+        </td>
         <td style={{ ...tdS, minWidth: 70, textAlign: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
             {totalBoxes > 0 ? totalBoxes : (po.box_count || '—')}
