@@ -372,24 +372,16 @@ export default function OrderCalendar({
                         return (
                           <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3, justifyContent: 'center' }}>
                             {cellNotes.map(({ rowName, isoDate, text }) => (
-                              <button
+                              <NoteBadge
                                 key={isoDate}
-                                title={`${fmtDate(isoDate)} — ${text}`}
+                                rowName={rowName}
+                                isoDate={isoDate}
+                                text={text}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   openNoteModal({ rowName, isoDate, text, editing: true })
                                 }}
-                                style={{
-                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                  width: 22, height: 22, borderRadius: 11,
-                                  background: '#E6F1FB', border: '1px solid #378ADD',
-                                  color: '#0C447C', fontSize: 11, lineHeight: 1,
-                                  cursor: 'pointer', padding: 0,
-                                }}
-                                aria-label={`Note for ${fmtDate(isoDate)}: ${text}`}
-                              >
-                                📝
-                              </button>
+                              />
                             ))}
                           </div>
                         )
@@ -404,6 +396,66 @@ export default function OrderCalendar({
       </table>
     </div>
     </div>
+  )
+}
+
+// Round 26 — hover-popup badge for calendar notes. Replaces the native
+// `title` tooltip (which was small, slow to appear, and styled by the OS)
+// with a custom React tooltip that renders a sticky-note-style bubble next
+// to the badge while the cursor is over it. Click still routes to the
+// edit/delete modal via the `onClick` prop.
+function NoteBadge({ rowName, isoDate, text, onClick }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <button
+        onClick={onClick}
+        aria-label={`Edit note for ${rowName} on ${isoDate}`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: 22, height: 22, borderRadius: '50%',
+          background: '#E6F1FB', border: '1.5px solid #378ADD',
+          color: '#0C447C', fontSize: 12, cursor: 'pointer', padding: 0,
+        }}
+      >
+        📝
+      </button>
+      {hovered && text && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            bottom: 'calc(100% + 6px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 50,
+            minWidth: 180,
+            maxWidth: 260,
+            padding: '8px 10px',
+            background: '#FFF8DC',
+            border: '1.5px solid #BA7517',
+            borderRadius: 6,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
+            fontSize: 11,
+            fontWeight: 500,
+            color: '#3a2a08',
+            textAlign: 'left',
+            lineHeight: 1.4,
+            whiteSpace: 'normal',
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 10, color: '#633806', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
+            {fmtDate(isoDate)}
+          </div>
+          <div>{text}</div>
+        </div>
+      )}
+    </span>
   )
 }
 
