@@ -2,7 +2,7 @@ import React from 'react'
 
 // body can be a string OR JSX (children). If `children` is passed we render it
 // underneath/instead of the body text, so callers can supply forms, inputs, etc.
-export default function Modal({ title, body, children, onConfirm, confirmLabel, onClose, danger, amber, disableConfirm }) {
+export default function Modal({ title, body, children, onConfirm, confirmLabel, onClose, onDelete, deleteLabel, danger, amber, disableConfirm }) {
   const confirmBg = danger ? '#C00000' : amber ? '#E26B0A' : '#1F3864'
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 20 }}>
@@ -10,23 +10,37 @@ export default function Modal({ title, body, children, onConfirm, confirmLabel, 
         <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{title}</h4>
         {body && <p style={{ fontSize: 12, color: '#555', lineHeight: 1.5, marginBottom: 14 }}>{body}</p>}
         {children && <div style={{ marginBottom: 14 }}>{children}</div>}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16, paddingTop: 10, borderTop: '1px solid #eee' }}>
-          <button onClick={onClose} style={cancelStyle}>Cancel</button>
-          {onConfirm && (
-            <button
-              onClick={onConfirm}
-              disabled={disableConfirm}
-              style={{
-                ...cancelStyle,
-                background: disableConfirm ? '#bbb' : confirmBg,
-                color: '#fff',
-                borderColor: disableConfirm ? '#bbb' : confirmBg,
-                cursor: disableConfirm ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {confirmLabel || 'Confirm'}
-            </button>
-          )}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 10, borderTop: '1px solid #eee' }}>
+          {/* Left slot — destructive action when caller provides onDelete.
+              Empty placeholder div keeps the Cancel/Confirm pair flush-right. */}
+          <div>
+            {onDelete && (
+              <button
+                onClick={onDelete}
+                style={{ ...cancelStyle, background: '#fff', color: '#C00000', borderColor: '#E2A6A6' }}
+              >
+                {deleteLabel || 'Delete'}
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={onClose} style={cancelStyle}>Cancel</button>
+            {onConfirm && (
+              <button
+                onClick={onConfirm}
+                disabled={disableConfirm}
+                style={{
+                  ...cancelStyle,
+                  background: disableConfirm ? '#bbb' : confirmBg,
+                  color: '#fff',
+                  borderColor: disableConfirm ? '#bbb' : confirmBg,
+                  cursor: disableConfirm ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {confirmLabel || 'Confirm'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

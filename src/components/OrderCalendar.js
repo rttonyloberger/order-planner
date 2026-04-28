@@ -68,7 +68,8 @@ export default function OrderCalendar({
     .filter(Boolean)
 
   // Open the note modal. preset can include {rowName, isoDate, text} when
-  // editing an existing note so the form starts pre-filled.
+  // editing an existing note so the form starts pre-filled. Editing mode
+  // also adds an explicit Delete button to the modal footer (Round 25).
   const openNoteModal = (preset = {}) => {
     let formState = {
       rowName: preset.rowName || '',
@@ -76,10 +77,10 @@ export default function OrderCalendar({
       text: preset.text || '',
     }
     const editing = !!preset.editing
-    showModal({
+    const modalOpts = {
       title: editing ? 'Edit calendar note' : 'Add calendar note',
       body: editing
-        ? 'Update the note attached to this calendar cell, or clear the text and save to remove it.'
+        ? 'Update the note attached to this calendar cell, or use Delete to remove it.'
         : 'Pick a supplier and a date — your note will pin to that cell on the calendar.',
       confirmLabel: editing ? 'Save changes' : 'Add note',
       onConfirm: () => {
@@ -101,7 +102,21 @@ export default function OrderCalendar({
           onChange={(patch) => { formState = { ...formState, ...patch } }}
         />
       ),
-    })
+    }
+    if (editing) {
+      // Round 25 — explicit delete button when editing. Targets the original
+      // preset key so renaming the row/date in the form (which is locked in
+      // edit mode anyway) can't desync the delete from the note shown.
+      modalOpts.onDelete = () => {
+        const innerKey = cnoteInnerKey(preset.rowName, preset.isoDate)
+        const next = { ...notesMap }
+        delete next[innerKey]
+        writeNotesMap(next)
+        closeModal()
+      }
+      modalOpts.deleteLabel = 'Delete note'
+    }
+    showModal(modalOpts)
   }
 
   // Open the Create-PO modal when the user clicks the green checkmark on a
@@ -355,27 +370,25 @@ export default function OrderCalendar({
                         })
                         if (!cellNotes.length) return null
                         return (
-                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3, justifyContent: 'center' }}>
                             {cellNotes.map(({ rowName, isoDate, text }) => (
                               <button
                                 key={isoDate}
-                                title={text}
+                                title={`${fmtDate(isoDate)} — ${text}`}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   openNoteModal({ rowName, isoDate, text, editing: true })
                                 }}
                                 style={{
-                                  display: 'flex', alignItems: 'center', gap: 4,
-                                  padding: '2px 6px', borderRadius: 6,
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  width: 22, height: 22, borderRadius: 11,
                                   background: '#E6F1FB', border: '1px solid #378ADD',
-                                  color: '#0C447C', fontSize: 9, fontWeight: 600,
-                                  cursor: 'pointer', maxWidth: '100%', overflow: 'hidden',
+                                  color: '#0C447C', fontSize: 11, lineHeight: 1,
+                                  cursor: 'pointer', padding: 0,
                                 }}
+                                aria-label={`Note for ${fmtDate(isoDate)}: ${text}`}
                               >
-                                <span style={{ fontSize: 10, lineHeight: 1, flexShrink: 0 }}>📝</span>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>
-                                  {fmtDate(isoDate)}: {text}
-                                </span>
+                                📝
                               </button>
                             ))}
                           </div>
