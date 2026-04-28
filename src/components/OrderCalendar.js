@@ -1,35 +1,31 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { projectedOrders, shortMonth, TODAY, SUPP_DESTS, SG_PRODUCTS, fmtDate } from '../constants'
 
-// Round 23 — per-cell calendar notes.
+// Round 23 (revised round 24) — per-cell calendar notes.
 //
-// Notes are stored in calendar_state under a separate "cnote|" prefix so they
-// can never collide with the checkbox/deleted slots that share the same table.
+// Storage: localStorage. The Supabase calendar_state table only has the
+// columns the checkbox/deleted slots use, so writing a `note` column to it
+// would silently fail (Supabase rejects unknown columns and the upsert
+// error went to console only — that's why notes were "going into the abyss"
+// on the first attempt). localStorage is per-device but unblocks the
+// feature without requiring a SQL migration. If Tony later wants
+// cross-device sync, run:
+//   ALTER TABLE calendar_state ADD COLUMN note TEXT;
+// and we can swap the localStorage calls for upsertCalState.
 //
-// Key shape: cnote|<entity>|<rowName>|<isoDate>
-//   entity   = "rt" | "sg"
-//   rowName  = supplier name (RT) or product name (SG)
-//   isoDate  = YYYY-MM-DD
-// Value shape: { note: "<text>" }   (deleted: true means the note was cleared)
-//
-// One note per (row, date). If the user wants multiple, they paste multi-line
-// text — keeps the data model simple and matches Tony's "small notes box"
-// framing.
-const CNOTE_PREFIX = 'cnote|'
-function buildCnoteKey(entity, rowName, isoDate) {
-  return `${CNOTE_PREFIX}${entity}|${rowName}|${isoDate}`
-}
-function parseCnoteKey(key) {
-  if (!key.startsWith(CNOTE_PREFIX)) return null
-  const rest = key.slice(CNOTE_PREFIX.length)
-  // rowName itself can theoretically contain a pipe — split off entity and
-  // isoDate from the ends and treat everything in between as rowName.
-  const parts = rest.split('|')
-  if (parts.length < 3) return null
-  const entity = parts[0]
+// Per entity (rt | sg) we store ONE JSON object under op.cnotes.<entity>:
+//   { "<rowName>|<isoDate>": "<note text>", ... }
+// rowName = supplier name on RT, product name on SG.
+const cnotesStorageKey = (entityKey) => `op.cnotes.${entityKey}`
+const cnoteInnerKey = (rowName, isoDate) => `${rowName}|${isoDate}`
+function parseCnoteInner(k) {
+  // rowName itself can contain a pipe in theory — split off the date from
+  // the end and treat everything before it as rowName.
+  const parts = k.split('|')
+  if (parts.length < 2) return null
   const isoDate = parts[parts.length - 1]
-  const rowName = parts.slice(1, -1).join('|')
-  return { entity, rowName, isoDate }
+  const rowName = parts.slice(0, -1).join('|')
+  return { rowName, isoDate }
 }
 
 export default function OrderCalendar({
@@ -43,11 +39,33 @@ export default function OrderCalendar({
   // List of selectable rows for the note modal — products on SG, suppliers on RT.
   const noteRowOptions = suppliers.map(s => s.name)
 
-  // Pull all live notes for this calendar (entity-filtered, non-deleted).
-  // Used to render 📝 badges inside each cell.
-  const allNotes = Object.entries(calState || {})
-    .map(([k, v]) => ({ key: k, parsed: parseCnoteKey(k), val: v }))
-    .filter(x => x.parsed && x.parsed.entity === entityKey && !x.val?.deleted && x.val?.note)
+  // Live note state, hydrated from localStorage on mount.
+  const [notesMap, setNotesMap] = useState({})
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(cnotesStorageKey(entityKey))
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') setNotesMap(parsed)
+      }
+    } catch {}
+  }, [entityKey])
+
+  // Persist the map back to localStorage every time it changes. setNotesMap
+  // is the single source of truth — readers below use notesMap directly.
+  const writeNotesMap = (next) => {
+    setNotesMap(next)
+    try { window.localStorage.setItem(cnotesStorageKey(entityKey), JSON.stringify(next)) } catch {}
+  }
+
+  // Build the array of live notes for the cells to filter by month/row.
+  const allNotes = Object.entries(notesMap)
+    .map(([innerKey, text]) => {
+      const parsed = parseCnoteInner(innerKey)
+      if (!parsed) return null
+      return { ...parsed, text }
+    })
+    .filter(Boolean)
 
   // Open the note modal. preset can include {rowName, isoDate, text} when
   // editing an existing note so the form starts pre-filled.
@@ -64,16 +82,14 @@ export default function OrderCalendar({
         ? 'Update the note attached to this calendar cell, or clear the text and save to remove it.'
         : 'Pick a supplier and a date — your note will pin to that cell on the calendar.',
       confirmLabel: editing ? 'Save changes' : 'Add note',
-      onConfirm: async () => {
+      onConfirm: () => {
         if (!formState.rowName || !formState.isoDate) return
-        const k = buildCnoteKey(entityKey, formState.rowName, formState.isoDate)
+        const innerKey = cnoteInnerKey(formState.rowName, formState.isoDate)
         const trimmed = (formState.text || '').trim()
-        if (!trimmed) {
-          // Empty text → soft-delete so the badge disappears.
-          await upsertCalState(k, { deleted: true, note: null })
-        } else {
-          await upsertCalState(k, { deleted: false, note: trimmed })
-        }
+        const next = { ...notesMap }
+        if (!trimmed) delete next[innerKey]
+        else next[innerKey] = trimmed
+        writeNotesMap(next)
         closeModal()
       },
       children: (
@@ -203,8 +219,8 @@ export default function OrderCalendar({
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,
             padding: '5px 12px', borderRadius: 6,
-            background: '#FFF8E6', border: '1.5px solid #BA7517',
-            color: '#633806', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            background: '#E6F1FB', border: '1.5px solid #378ADD',
+            color: '#0C447C', fontSize: 11, fontWeight: 600, cursor: 'pointer',
           }}
           title="Pin a note to a specific cell on this calendar"
         >
@@ -330,9 +346,9 @@ export default function OrderCalendar({
                           Click a badge to edit/delete in the same modal. */}
                       {(() => {
                         const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0)
-                        const cellNotes = allNotes.filter(({ parsed }) => {
-                          if (parsed.rowName !== s.name) return false
-                          const [yy, mm, dd] = parsed.isoDate.split('-').map(Number)
+                        const cellNotes = allNotes.filter(n => {
+                          if (n.rowName !== s.name) return false
+                          const [yy, mm, dd] = n.isoDate.split('-').map(Number)
                           if (!yy || !mm || !dd) return false
                           const nd = new Date(yy, mm - 1, dd)
                           return nd >= m && nd <= monthEnd
@@ -340,25 +356,25 @@ export default function OrderCalendar({
                         if (!cellNotes.length) return null
                         return (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {cellNotes.map(({ parsed, val }) => (
+                            {cellNotes.map(({ rowName, isoDate, text }) => (
                               <button
-                                key={parsed.isoDate}
-                                title={val.note}
+                                key={isoDate}
+                                title={text}
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  openNoteModal({ rowName: parsed.rowName, isoDate: parsed.isoDate, text: val.note, editing: true })
+                                  openNoteModal({ rowName, isoDate, text, editing: true })
                                 }}
                                 style={{
                                   display: 'flex', alignItems: 'center', gap: 4,
                                   padding: '2px 6px', borderRadius: 6,
-                                  background: '#FFF2CC', border: '1px solid #BA7517',
-                                  color: '#633806', fontSize: 9, fontWeight: 600,
+                                  background: '#E6F1FB', border: '1px solid #378ADD',
+                                  color: '#0C447C', fontSize: 9, fontWeight: 600,
                                   cursor: 'pointer', maxWidth: '100%', overflow: 'hidden',
                                 }}
                               >
                                 <span style={{ fontSize: 10, lineHeight: 1, flexShrink: 0 }}>📝</span>
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>
-                                  {fmtDate(parsed.isoDate)}: {val.note}
+                                  {fmtDate(isoDate)}: {text}
                                 </span>
                               </button>
                             ))}
