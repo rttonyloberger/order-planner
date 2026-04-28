@@ -555,7 +555,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             own centered carrier pill lined up with the other
                             per-container cells. Falls back to PO-level
                             carrier when there are no containers. */}
-                        <td style={{ ...tdS, minWidth: 130, fontSize: 10, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 130, fontSize: 10, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => {
@@ -583,7 +583,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             share the same 56px slot rhythm so rows align.
                             Label and tracking number stack centered inside
                             each slot. */}
-                        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 160, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => {
@@ -604,7 +604,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                         {/* Last Update — per-container, centered, no
                             label (Tracking # column has it). Slot height
                             matches the other per-container cells. */}
-                        <td style={{ ...tdS, minWidth: 100, fontSize: 10, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 100, fontSize: 10, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => {
@@ -627,7 +627,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
                         {/* Tracking Status — per-container, centered. */}
-                        <td style={{ ...tdS, minWidth: 130, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 130, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => {
@@ -673,7 +673,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
                         {/* FCL/LCL + boxes — per-container, centered. */}
-                        <td style={{ ...tdS, minWidth: 100, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 100, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => (
@@ -706,7 +706,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               </div>}
                         </td>
                         {/* Notes (per-container when containers exist) */}
-                        <td style={{ ...tdS, minWidth: 180, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 180, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => (
@@ -721,7 +721,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             : <PONotesCell po={p} upsertPO={upsertPO} />}
                         </td>
                         {/* Docs (per-container when containers exist) */}
-                        <td style={{ ...tdS, minWidth: 200, verticalAlign: 'top', padding: '4px 4px' }}>
+                        <td style={{ ...tdS, minWidth: 200, verticalAlign: 'middle', padding: '4px 4px' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => (
@@ -740,7 +740,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                             each container's eta in Supabase; manual entries
                             persist until tracking provides a real date.
                             Falls back to p.eta when there are no containers. */}
-                        <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'top' }}>
+                        <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'middle' }}>
                           {hasAnyContainers
                             ? <div style={slotListStyle}>
                                 {containers.map(c => {
@@ -1067,14 +1067,14 @@ function BBContainerSubRow({ container, parentPo, trackingInfo: trackingInfoProp
       </td>
 
       {/* Notes (per container) */}
-      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '6px 8px' }}>
+      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'middle', padding: '6px 8px' }}>
         <PONotesCell po={notesShim} upsertPO={notesUpsert} />
       </td>
 
       {/* Docs — shared with the parent PO's doc bucket. Any container can
           attach/see them, reflecting that docs like packing lists typically
           cover the whole PO rather than a single container. */}
-      <td style={{ ...tdS, minWidth: 180, verticalAlign: 'top', padding: '6px 8px' }}>
+      <td style={{ ...tdS, minWidth: 180, verticalAlign: 'middle', padding: '6px 8px' }}>
         <PODocsCell poId={parentPo.id} />
       </td>
 

@@ -1,5 +1,36 @@
 import React, { useState } from 'react'
-import { projectedOrders, shortMonth, TODAY, SUPP_DESTS, SG_PRODUCTS } from '../constants'
+import { projectedOrders, shortMonth, TODAY, SUPP_DESTS, SG_PRODUCTS, fmtDate } from '../constants'
+
+// Round 23 — per-cell calendar notes.
+//
+// Notes are stored in calendar_state under a separate "cnote|" prefix so they
+// can never collide with the checkbox/deleted slots that share the same table.
+//
+// Key shape: cnote|<entity>|<rowName>|<isoDate>
+//   entity   = "rt" | "sg"
+//   rowName  = supplier name (RT) or product name (SG)
+//   isoDate  = YYYY-MM-DD
+// Value shape: { note: "<text>" }   (deleted: true means the note was cleared)
+//
+// One note per (row, date). If the user wants multiple, they paste multi-line
+// text — keeps the data model simple and matches Tony's "small notes box"
+// framing.
+const CNOTE_PREFIX = 'cnote|'
+function buildCnoteKey(entity, rowName, isoDate) {
+  return `${CNOTE_PREFIX}${entity}|${rowName}|${isoDate}`
+}
+function parseCnoteKey(key) {
+  if (!key.startsWith(CNOTE_PREFIX)) return null
+  const rest = key.slice(CNOTE_PREFIX.length)
+  // rowName itself can theoretically contain a pipe — split off entity and
+  // isoDate from the ends and treat everything in between as rowName.
+  const parts = rest.split('|')
+  if (parts.length < 3) return null
+  const entity = parts[0]
+  const isoDate = parts[parts.length - 1]
+  const rowName = parts.slice(1, -1).join('|')
+  return { entity, rowName, isoDate }
+}
 
 export default function OrderCalendar({
   suppliers, styleMap, calState, months, upsertCalState, isSG, pos,
@@ -7,6 +38,55 @@ export default function OrderCalendar({
   upsertPO, showModal, closeModal,
 }) {
   const today = TODAY
+  const entityKey = isSG ? 'sg' : 'rt'
+
+  // List of selectable rows for the note modal — products on SG, suppliers on RT.
+  const noteRowOptions = suppliers.map(s => s.name)
+
+  // Pull all live notes for this calendar (entity-filtered, non-deleted).
+  // Used to render 📝 badges inside each cell.
+  const allNotes = Object.entries(calState || {})
+    .map(([k, v]) => ({ key: k, parsed: parseCnoteKey(k), val: v }))
+    .filter(x => x.parsed && x.parsed.entity === entityKey && !x.val?.deleted && x.val?.note)
+
+  // Open the note modal. preset can include {rowName, isoDate, text} when
+  // editing an existing note so the form starts pre-filled.
+  const openNoteModal = (preset = {}) => {
+    let formState = {
+      rowName: preset.rowName || '',
+      isoDate: preset.isoDate || '',
+      text: preset.text || '',
+    }
+    const editing = !!preset.editing
+    showModal({
+      title: editing ? 'Edit calendar note' : 'Add calendar note',
+      body: editing
+        ? 'Update the note attached to this calendar cell, or clear the text and save to remove it.'
+        : 'Pick a supplier and a date — your note will pin to that cell on the calendar.',
+      confirmLabel: editing ? 'Save changes' : 'Add note',
+      onConfirm: async () => {
+        if (!formState.rowName || !formState.isoDate) return
+        const k = buildCnoteKey(entityKey, formState.rowName, formState.isoDate)
+        const trimmed = (formState.text || '').trim()
+        if (!trimmed) {
+          // Empty text → soft-delete so the badge disappears.
+          await upsertCalState(k, { deleted: true, note: null })
+        } else {
+          await upsertCalState(k, { deleted: false, note: trimmed })
+        }
+        closeModal()
+      },
+      children: (
+        <CalendarNoteForm
+          rows={noteRowOptions}
+          initial={formState}
+          isSG={isSG}
+          editing={editing}
+          onChange={(patch) => { formState = { ...formState, ...patch } }}
+        />
+      ),
+    })
+  }
 
   // Open the Create-PO modal when the user clicks the green checkmark on a
   // projected-order slot. If the slot is already checked, clicking again just
@@ -114,6 +194,23 @@ export default function OrderCalendar({
   }
 
   return (
+    <div>
+      {/* Round 23 — "+ Add Calendar Note" affordance. Sits directly above the
+          calendar so it's findable without taking space inside cells. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button
+          onClick={() => openNoteModal()}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '5px 12px', borderRadius: 6,
+            background: '#FFF8E6', border: '1.5px solid #BA7517',
+            color: '#633806', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          }}
+          title="Pin a note to a specific cell on this calendar"
+        >
+          <span style={{ fontSize: 13, lineHeight: 1 }}>📝</span> Add Calendar Note
+        </button>
+      </div>
     <div style={{ overflowX: 'auto', border: '1px solid #ddd', borderRadius: 8, marginBottom: 4 }}>
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead>
@@ -227,6 +324,47 @@ export default function OrderCalendar({
                           </div>
                         )
                       })}
+                      {/* Round 23 — calendar notes pinned to this row in this
+                          month. Each badge shows 📝 + truncated preview, full
+                          text exposed via the native title tooltip on hover.
+                          Click a badge to edit/delete in the same modal. */}
+                      {(() => {
+                        const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0)
+                        const cellNotes = allNotes.filter(({ parsed }) => {
+                          if (parsed.rowName !== s.name) return false
+                          const [yy, mm, dd] = parsed.isoDate.split('-').map(Number)
+                          if (!yy || !mm || !dd) return false
+                          const nd = new Date(yy, mm - 1, dd)
+                          return nd >= m && nd <= monthEnd
+                        })
+                        if (!cellNotes.length) return null
+                        return (
+                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {cellNotes.map(({ parsed, val }) => (
+                              <button
+                                key={parsed.isoDate}
+                                title={val.note}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  openNoteModal({ rowName: parsed.rowName, isoDate: parsed.isoDate, text: val.note, editing: true })
+                                }}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 4,
+                                  padding: '2px 6px', borderRadius: 6,
+                                  background: '#FFF2CC', border: '1px solid #BA7517',
+                                  color: '#633806', fontSize: 9, fontWeight: 600,
+                                  cursor: 'pointer', maxWidth: '100%', overflow: 'hidden',
+                                }}
+                              >
+                                <span style={{ fontSize: 10, lineHeight: 1, flexShrink: 0 }}>📝</span>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9 }}>
+                                  {fmtDate(parsed.isoDate)}: {val.note}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </td>
                   )
                 })}
@@ -235,6 +373,72 @@ export default function OrderCalendar({
           })}
         </tbody>
       </table>
+    </div>
+    </div>
+  )
+}
+
+// Round 23 — form rendered inside the calendar-note modal. Two required
+// fields (row + date) plus a freeform textarea. When `editing`, the row +
+// date are presented read-only so the user is clearly editing the note that
+// they clicked on rather than retargeting it.
+function CalendarNoteForm({ rows, initial, isSG, editing, onChange }) {
+  const [rowName, setRowName] = useState(initial.rowName || '')
+  const [isoDate, setIsoDate] = useState(initial.isoDate || '')
+  const [text, setText] = useState(initial.text || '')
+
+  const push = (patch) => {
+    const next = { rowName, isoDate, text, ...patch }
+    onChange(next)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <label style={{ ...labelS, flex: 1 }}>
+          {isSG ? 'Product' : 'Supplier'} <span style={{ color: '#A32D2D' }}>*</span>
+          {editing ? (
+            <input value={rowName} disabled style={{ ...inputS, background: '#f5f5f3', color: '#444' }} />
+          ) : (
+            <select
+              value={rowName}
+              onChange={e => { setRowName(e.target.value); push({ rowName: e.target.value }) }}
+              style={inputS}
+              autoFocus
+            >
+              <option value=''>-- Select --</option>
+              {rows.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          )}
+        </label>
+        <label style={{ ...labelS, flex: 1 }}>
+          Date <span style={{ color: '#A32D2D' }}>*</span>
+          {editing ? (
+            <input value={isoDate} disabled style={{ ...inputS, background: '#f5f5f3', color: '#444' }} />
+          ) : (
+            <input
+              type="date"
+              value={isoDate}
+              onChange={e => { setIsoDate(e.target.value); push({ isoDate: e.target.value }) }}
+              style={inputS}
+            />
+          )}
+        </label>
+      </div>
+      <label style={labelS}>
+        Note
+        <textarea
+          value={text}
+          onChange={e => { setText(e.target.value); push({ text: e.target.value }) }}
+          placeholder={editing ? 'Clear this and save to delete the note.' : 'e.g. Place a BIG order of lead jigs here for February shipment'}
+          rows={4}
+          style={{ ...inputS, fontFamily: 'inherit', resize: 'vertical' }}
+          autoFocus={editing}
+        />
+      </label>
+      <div style={{ fontSize: 11, color: '#888', fontStyle: 'italic' }}>
+        Notes pin to a specific cell. Hover the 📝 badge on the calendar to read.
+      </div>
     </div>
   )
 }
