@@ -510,7 +510,15 @@ export function AWDPORow({
             </select>
           )}
         </td>
-        <td style={{ ...tdS, fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>{fmtDate(po.order_date)}</td>
+        {/* Order Date — editable in Draft mode (round 22) so users can correct
+            it before committing. Read-only otherwise. */}
+        <td style={{ ...tdS, fontSize: 11, color: '#666' }} onClick={e => e.stopPropagation()}>
+          {isDraft ? (
+            <input key={po.order_date || 'none-od'} type="date" defaultValue={po.order_date || ''} onBlur={e => update('order_date', e.target.value || null)} style={{ fontSize: 11, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: 110 }} />
+          ) : (
+            fmtDate(po.order_date)
+          )}
+        </td>
         {/* ETA column — hidden on the Completed POs tab */}
         {!isComplete && (
           <td style={tdS} onClick={e => e.stopPropagation()}>
@@ -548,8 +556,15 @@ export function AWDPORow({
         {isComplete ? (
           <td style={{ ...tdS, fontWeight: 700, minWidth: 130, background: '#EAF3DE', color: '#27500A', border: '1px solid #97C459' }}>
             <div>
-              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase' }}>Delivered</div>
+              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase' }}>✓ Delivered</div>
               <div style={{ fontSize: 11, marginTop: 2 }}>{receivedText}</div>
+              {/* Round 22 — surface the original order date next to the
+                  Delivered badge so the full timeline is visible at a glance. */}
+              {po.order_date && (
+                <div style={{ fontSize: 10, marginTop: 4, fontWeight: 500, color: '#3a6a18' }}>
+                  Ordered: {fmtDate(po.order_date)}
+                </div>
+              )}
             </div>
           </td>
         ) : (
@@ -784,9 +799,38 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
     dest: defaultDest || (destOptions && destOptions[0]) || '',
     order_date: '', eta: '', po_value: '', product_type: '',
   })
+  // Round 22 — track which required fields are missing so the user gets a
+  // visible red border + inline message instead of a silent no-op.
+  // Required = supplier + PO #. Other fields are optional / can be filled in
+  // later from the row itself.
+  const [errors, setErrors] = useState({})
+
+  // Helper that returns the input style merged with a red error border when
+  // the named field is currently flagged. Used inline below so each field
+  // can opt in just by passing its key.
+  const errBorder = '#E24B4A'
+  const errBg = '#FFF4F4'
+  const styleFor = (base, key) => errors[key]
+    ? { ...base, border: `1.5px solid ${errBorder}`, background: errBg }
+    : base
+  // Clear a single field's error when the user starts typing/selecting it
+  // again — feels more responsive than waiting for next submit.
+  const clearError = (key) => {
+    if (!errors[key]) return
+    setErrors(prev => {
+      const next = { ...prev }; delete next[key]; return next
+    })
+  }
 
   const submit = () => {
-    if (!row.supplier || !row.id) return
+    const errs = {}
+    if (!row.supplier) errs.supplier = true
+    if (!row.id || !String(row.id).trim()) errs.id = true
+    if (Object.keys(errs).length) {
+      setErrors(errs)
+      return
+    }
+    setErrors({})
     upsertPO({
       id: row.id,
       supplier: row.supplier,
@@ -806,15 +850,24 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
     })
   }
 
+  const hasErrors = Object.keys(errors).length > 0
+
   return (
     <div style={{ marginTop: 10, border: '1px solid #ddd', borderRadius: 8, padding: '10px 12px', background: '#f8f8f6' }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: '#1F3864', marginBottom: 8 }}>{label}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-        <select style={addSelS} value={row.supplier} onChange={e => setRow(r => ({...r, supplier: e.target.value}))}>
+        <select
+          style={styleFor(addSelS, 'supplier')}
+          value={row.supplier}
+          onChange={e => { setRow(r => ({...r, supplier: e.target.value})); clearError('supplier') }}>
           <option value=''>Supplier</option>
           {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <input style={addInpS} placeholder="PO #" value={row.id} onChange={e => setRow(r => ({...r, id: e.target.value}))} />
+        <input
+          style={styleFor(addInpS, 'id')}
+          placeholder="PO #"
+          value={row.id}
+          onChange={e => { setRow(r => ({...r, id: e.target.value})); clearError('id') }} />
         {!hideDest && <select style={addSelS} value={row.dest} onChange={e => setRow(r => ({...r, dest: e.target.value}))}>
           {destOptions.map(d => <option key={d} value={d}>{d}</option>)}
         </select>}
@@ -838,6 +891,19 @@ export function AddAWDPORow({ tableId, entity, defaultDest, destOptions, supplie
           + Add PO
         </button>
       </div>
+      {/* Inline validation message — only shows after a submit attempt that
+          had missing required fields. Listing the missing fields by name
+          makes it obvious which red box to fill. */}
+      {hasErrors && (
+        <div style={{ marginTop: 8, fontSize: 11, color: errBorder, fontWeight: 600 }}>
+          Please fill out the highlighted field{Object.keys(errors).length > 1 ? 's' : ''}:
+          {' '}
+          {[
+            errors.supplier ? 'Supplier' : null,
+            errors.id ? 'PO #' : null,
+          ].filter(Boolean).join(', ')}
+        </div>
+      )}
     </div>
   )
 }

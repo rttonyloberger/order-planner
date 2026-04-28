@@ -68,7 +68,7 @@ export default function CompletedTab({ pos, upsertPO, deletePO, showModal, close
 
       <SubHeader label="SG AWD/FBA Received" count={sgAwdCount} />
       <AWDPOTable {...commonProps}
-        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG"
+        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA', 'GWD']} entityFilter="SG"
         emptyMessage="No completed SG AWD/FBA POs yet." />
     </div>
   )

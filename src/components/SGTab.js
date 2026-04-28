@@ -3,6 +3,7 @@ import { SGS_COLORS, SG_PRODUCTS, projectedOrders, shortMonth, TODAY } from '../
 import OrderCalendar from './OrderCalendar'
 import { AWDPOTable, AddAWDPORow } from './AWDTab'
 import SearchBox from './SearchBox'
+import NotesPanel from './NotesPanel'
 
 // SG currently orders from a single overseas supplier. Keeping the list here
 // so both BB and AWD/FBA add-PO rows offer the same dropdown.
@@ -29,6 +30,10 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
         upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
       <CombinedRow products={products} months={months} />
 
+      {/* Free-form notes panel below the calendar/combined row — same component
+          used on the RT tab. Persists in localStorage on this device. */}
+      <NotesPanel storageKey="op.notes.sg" label="SG Notes" />
+
       <div style={bigSecStyle}>SG Big Bend (BB) Open POs and Arrivals</div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
         Click any row to expand and manage containers — each container can have its own tracking number, boxes and estimated receive date.
@@ -54,16 +59,18 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
         Click any row to expand and manage containers — each container can have its own tracking number, boxes, destination and estimated receive date.
       </p>
       <ArrivalLegend />
-      {/* Shared AWD/FBA table, filtered to SG entity */}
+      {/* Shared AWD/FBA table, filtered to SG entity. GWD added round 22 as a
+          third destination option per Tony — same dropdown applies to existing
+          rows and the add-row below. */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA']} entityFilter="SG"
+        tableIds={['sg-awdfba']} destOptions={['AWD', 'FBA', 'GWD']} entityFilter="SG"
         searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="sg-awdfba"
         entity="SG"
         defaultDest="AWD"
-        destOptions={['AWD', 'FBA']}
+        destOptions={['AWD', 'FBA', 'GWD']}
         suppliers={SG_SUPPLIERS}
         productOptions={SG_PRODUCTS}
         upsertPO={upsertPO}

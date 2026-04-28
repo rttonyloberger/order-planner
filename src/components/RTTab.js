@@ -3,6 +3,7 @@ import { SUPP_COLORS, RT_PRODUCTS } from '../constants'
 import OrderCalendar from './OrderCalendar'
 import { AWDPOTable, AddAWDPORow } from './AWDTab'
 import SearchBox from './SearchBox'
+import NotesPanel from './NotesPanel'
 
 // Suppliers list used by the RT add-PO rows. Matches the list in SGTab
 // so both BB and AWD add-rows offer the same dropdown.
@@ -28,6 +29,11 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <OrderCalendar suppliers={suppliers} styleMap={SUPP_COLORS} calState={calState} months={months}
         upsertCalState={upsertCalState} isSG={false} pos={pos}
         upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
+
+      {/* Free-form notes panel below the calendar — Tony uses this to jot
+          context like "in 2 months we want to place a BUNCH of lead jigs".
+          Persists in localStorage on this device. */}
+      <NotesPanel storageKey="op.notes.rt" label="RT Notes" />
 
       <div style={bigSecStyle}>RT Big Bend (BB) Open POs and Arrivals</div>
       <p style={{ fontSize: 11, color: '#666', marginBottom: 8 }}>
