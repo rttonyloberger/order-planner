@@ -1,10 +1,11 @@
-export const SG_PRODUCTS = ['Non-Woven', 'Woven', 'Weed Barrier']
+export const SG_PRODUCTS = ['Non-Woven', 'Woven', 'Weed Barrier', 'Staples']
 export const RT_PRODUCTS = ['Fishing Line', 'Rod Socks', 'Jigs/Hooks', 'Storage', 'Apparel', 'Wacky Rings']
 
 export const PROD_STYLES = {
   'Non-Woven':   { bg: '#EAF3DE', fc: '#27500A' },
   'Woven':       { bg: '#E6F1FB', fc: '#0C447C' },
   'Weed Barrier':{ bg: '#FAECE7', fc: '#712B13' },
+  'Staples':     { bg: '#FAEEDA', fc: '#633806' },
 }
 
 export const SUPP_COLORS = {

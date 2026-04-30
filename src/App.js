@@ -113,6 +113,9 @@ function MainApp({ session }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <img src={LOGO} alt="RT Logo" style={{ height: 32, width: 'auto', objectFit: 'contain' }} />
           <span style={{ color: '#fff', fontWeight: 700, fontSize: 14, marginLeft: 4 }}>RT/SG Logistics and Purchasing Portal</span>
+          {/* Tiny build marker so Tony can verify the new code is live after
+              a deploy. Bump the version string each round. */}
+          <span style={{ color: '#8BA4CC', fontSize: 9, marginLeft: 8, opacity: 0.7, letterSpacing: '.05em' }}>build r27</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ color: '#8BA4CC', fontSize: 11 }}>{session.user.email}</span>
