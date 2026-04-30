@@ -9,7 +9,7 @@ import NotesPanel from './NotesPanel'
 // so both BB and AWD/FBA add-PO rows offer the same dropdown.
 const SG_SUPPLIERS = ['CNBM INTERNATIONAL']
 
-export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
+export default function SGTab({ pos, calState, sgConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {}, calNotes = {}, upsertCalNote = async () => {}, deleteCalNote = async () => {} }) {
   const products = sgConfig.map(c => ({
     name: c.name,
     last: c.last_order_date,
@@ -27,7 +27,8 @@ export default function SGTab({ pos, calState, sgConfig, months, upsertPO, delet
       <Legend items={products.map(s => ({ c: (SGS_COLORS[s.name] || {}).b || '#999', l: s.name }))} />
       <OrderCalendar suppliers={products} styleMap={SGS_COLORS} calState={calState} months={months}
         upsertCalState={upsertCalState} isSG={true} pos={pos}
-        upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
+        upsertPO={upsertPO} showModal={showModal} closeModal={closeModal}
+        calNotes={calNotes} upsertCalNote={upsertCalNote} deleteCalNote={deleteCalNote} />
       <CombinedRow products={products} months={months} />
 
       {/* Free-form notes panel below the calendar/combined row — same component

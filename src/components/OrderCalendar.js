@@ -1,37 +1,35 @@
 import React, { useState, useEffect } from 'react'
 import { projectedOrders, shortMonth, TODAY, SUPP_DESTS, SG_PRODUCTS, fmtDate } from '../constants'
 
-// Round 23 (revised round 24) — per-cell calendar notes.
+// Round 26 — per-cell calendar notes, now backed by Supabase.
 //
-// Storage: localStorage. The Supabase calendar_state table only has the
-// columns the checkbox/deleted slots use, so writing a `note` column to it
-// would silently fail (Supabase rejects unknown columns and the upsert
-// error went to console only — that's why notes were "going into the abyss"
-// on the first attempt). localStorage is per-device but unblocks the
-// feature without requiring a SQL migration. If Tony later wants
-// cross-device sync, run:
-//   ALTER TABLE calendar_state ADD COLUMN note TEXT;
-// and we can swap the localStorage calls for upsertCalState.
+// Earlier rounds stored notes in localStorage which meant they only existed
+// on the device that wrote them, and were lost whenever the bundle was
+// rebuilt or the user logged in from another machine. That was the root of
+// "the note I added gets deleted every time you make some changes" — it
+// wasn't actually being deleted, just never visible to anyone but the
+// authoring browser.
 //
-// Per entity (rt | sg) we store ONE JSON object under op.cnotes.<entity>:
-//   { "<rowName>|<isoDate>": "<note text>", ... }
-// rowName = supplier name on RT, product name on SG.
-const cnotesStorageKey = (entityKey) => `op.cnotes.${entityKey}`
-const cnoteInnerKey = (rowName, isoDate) => `${rowName}|${isoDate}`
-function parseCnoteInner(k) {
-  // rowName itself can contain a pipe in theory — split off the date from
-  // the end and treat everything before it as rowName.
-  const parts = k.split('|')
-  if (parts.length < 2) return null
-  const isoDate = parts[parts.length - 1]
-  const rowName = parts.slice(0, -1).join('|')
-  return { rowName, isoDate }
-}
+// Storage now: a calendar_notes table (see SQL_MIGRATION_round26.sql). The
+// store hook (useStore) loads + subscribes + exposes upsert/delete helpers
+// passed in here as props. Notes show up everywhere, instantly, for every
+// authenticated user, and survive deploys.
+//
+// Key format: "<entity>|<rowName>|<isoDate>" where entity is 'rt' or 'sg',
+// rowName is the supplier name (RT) or product name (SG), and isoDate is the
+// 'YYYY-MM-DD' string of the cell.
+const calNoteKey = (entity, rowName, isoDate) => `${entity}|${rowName}|${isoDate}`
 
 export default function OrderCalendar({
   suppliers, styleMap, calState, months, upsertCalState, isSG, pos,
   // new props — required for the "create PO" popup that opens when a slot is checked off.
   upsertPO, showModal, closeModal,
+  // round 26 — calendar notes are now passed in from the store so they
+  // round-trip through Supabase. calNotes is the full keyed map; the
+  // upsert/delete helpers do the writes. Falls back to empty map and
+  // no-ops if the parent didn't wire them up yet (defensive — shouldn't
+  // happen in production).
+  calNotes = {}, upsertCalNote = async () => {}, deleteCalNote = async () => {},
 }) {
   const today = TODAY
   const entityKey = isSG ? 'sg' : 'rt'
@@ -39,33 +37,13 @@ export default function OrderCalendar({
   // List of selectable rows for the note modal — products on SG, suppliers on RT.
   const noteRowOptions = suppliers.map(s => s.name)
 
-  // Live note state, hydrated from localStorage on mount.
-  const [notesMap, setNotesMap] = useState({})
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(cnotesStorageKey(entityKey))
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        if (parsed && typeof parsed === 'object') setNotesMap(parsed)
-      }
-    } catch {}
-  }, [entityKey])
-
-  // Persist the map back to localStorage every time it changes. setNotesMap
-  // is the single source of truth — readers below use notesMap directly.
-  const writeNotesMap = (next) => {
-    setNotesMap(next)
-    try { window.localStorage.setItem(cnotesStorageKey(entityKey), JSON.stringify(next)) } catch {}
-  }
-
-  // Build the array of live notes for the cells to filter by month/row.
-  const allNotes = Object.entries(notesMap)
-    .map(([innerKey, text]) => {
-      const parsed = parseCnoteInner(innerKey)
-      if (!parsed) return null
-      return { ...parsed, text }
-    })
-    .filter(Boolean)
+  // Build the array of live notes for THIS entity's calendar (rt vs sg).
+  // calNotes from the store contains every entity's notes; we filter to ours
+  // by entity prefix on the key. Each entry exposes rowName + isoDate +
+  // text in the shape the cell renderer expects.
+  const allNotes = Object.values(calNotes)
+    .filter(n => n && n.entity === entityKey)
+    .map(n => ({ rowName: n.row_name, isoDate: n.iso_date, text: n.note_text }))
 
   // Open the note modal. preset can include {rowName, isoDate, text} when
   // editing an existing note so the form starts pre-filled. Editing mode
@@ -83,14 +61,22 @@ export default function OrderCalendar({
         ? 'Update the note attached to this calendar cell, or use Delete to remove it.'
         : 'Pick a supplier and a date — your note will pin to that cell on the calendar.',
       confirmLabel: editing ? 'Save changes' : 'Add note',
-      onConfirm: () => {
+      onConfirm: async () => {
         if (!formState.rowName || !formState.isoDate) return
-        const innerKey = cnoteInnerKey(formState.rowName, formState.isoDate)
+        const key = calNoteKey(entityKey, formState.rowName, formState.isoDate)
         const trimmed = (formState.text || '').trim()
-        const next = { ...notesMap }
-        if (!trimmed) delete next[innerKey]
-        else next[innerKey] = trimmed
-        writeNotesMap(next)
+        if (!trimmed) {
+          // Empty text → treat as delete (matches the previous "clear and
+          // save to delete" affordance from the form helper text).
+          await deleteCalNote(key)
+        } else {
+          await upsertCalNote(key, {
+            entity: entityKey,
+            row_name: formState.rowName,
+            iso_date: formState.isoDate,
+            note_text: trimmed,
+          })
+        }
         closeModal()
       },
       children: (
@@ -107,11 +93,9 @@ export default function OrderCalendar({
       // Round 25 — explicit delete button when editing. Targets the original
       // preset key so renaming the row/date in the form (which is locked in
       // edit mode anyway) can't desync the delete from the note shown.
-      modalOpts.onDelete = () => {
-        const innerKey = cnoteInnerKey(preset.rowName, preset.isoDate)
-        const next = { ...notesMap }
-        delete next[innerKey]
-        writeNotesMap(next)
+      modalOpts.onDelete = async () => {
+        const key = calNoteKey(entityKey, preset.rowName, preset.isoDate)
+        await deleteCalNote(key)
         closeModal()
       }
       modalOpts.deleteLabel = 'Delete note'

@@ -69,7 +69,7 @@ export function receiveDateDisplay(etaIso) {
 //
 // onUpdate takes just { ...updates }; the caller wraps in c.id to match
 // BBContainerSubRow's signature.
-function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
+function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest = false }) {
   const [val, setVal] = useState(container.tracking_number || '')
   const [trackingInfo, setTrackingInfo] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -132,34 +132,56 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
   const notesShim = { id: container.id, notes: container.notes }
   const notesUpsert = (obj) => onUpdate({ notes: obj.notes ?? null })
 
+  // Round 26 — once a tracking number is saved on a container, every other
+  // field on that container locks. Tony: "when a tracking number locks, make
+  // sure all field after getting filled it, lock in and the only way to
+  // change it is if you change it to draft in the SG or RT tab". Flipping
+  // the parent PO back to Draft re-opens every input.
+  const parentDraft = (parentPo?.status || 'Draft') === 'Draft'
+  const cLocked = !parentDraft && !!container.tracking_number
+
   return (
     <tr style={{ borderBottom: '1px solid #eef2f6' }}>
       {/* Name */}
       <td style={{ ...tdS, textAlign: 'left', minWidth: 140, background: '#f7fafd' }}>
-        <input
-          type="text"
-          defaultValue={container.name || ''}
-          placeholder={defaultName}
-          onBlur={e => {
-            const v = e.target.value.trim()
-            if ((v || null) !== (container.name || null)) onUpdate({ name: v || null })
-          }}
-          style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #d0d7e2', borderRadius: 4, width: '100%', fontFamily: 'monospace', fontWeight: 600, color: '#1F3864', background: '#fff' }}
-          title={`Default: ${defaultName}`}
-        />
-        {!container.name && <div style={{ fontSize: 9, color: '#888', marginTop: 2 }}>default: {defaultName}</div>}
+        {cLocked ? (
+          <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#1F3864', fontSize: 11 }}>
+            {safeStr(container.name || defaultName)}
+          </span>
+        ) : (
+          <>
+            <input
+              type="text"
+              defaultValue={container.name || ''}
+              placeholder={defaultName}
+              onBlur={e => {
+                const v = e.target.value.trim()
+                if ((v || null) !== (container.name || null)) onUpdate({ name: v || null })
+              }}
+              style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #d0d7e2', borderRadius: 4, width: '100%', fontFamily: 'monospace', fontWeight: 600, color: '#1F3864', background: '#fff' }}
+              title={`Default: ${defaultName}`}
+            />
+            {!container.name && <div style={{ fontSize: 9, color: '#888', marginTop: 2 }}>default: {defaultName}</div>}
+          </>
+        )}
       </td>
 
       {/* Tracking # */}
       <td style={{ ...tdS, minWidth: 160 }}>
-        <input
-          type="text"
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          onBlur={handleTrackingBlur}
-          placeholder="Enter tracking #"
-          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
-        />
+        {cLocked ? (
+          <span style={{ fontFamily: 'monospace', color: '#444', fontSize: 11 }}>
+            {safeStr(container.tracking_number)}
+          </span>
+        ) : (
+          <input
+            type="text"
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            onBlur={handleTrackingBlur}
+            placeholder="Enter tracking #"
+            style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace' }}
+          />
+        )}
       </td>
 
       {/* Carrier */}
@@ -189,51 +211,79 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
               : <span style={{ color: '#ccc' }}>—</span>}
       </td>
 
-      {/* Dest — AWD-specific, short warehouse code (e.g. FTW1, ONT8, LGB8) */}
-      <td style={{ ...tdS, minWidth: 80 }}>
-        <input
-          type="text"
-          defaultValue={container.dest || ''}
-          placeholder="e.g. FTW1"
-          maxLength={8}
-          onBlur={e => onUpdate({ dest: e.target.value.trim().toUpperCase() || null })}
-          style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace', textTransform: 'uppercase', textAlign: 'center' }}
-        />
-      </td>
+      {/* Dest — AWD-specific, short warehouse code (e.g. FTW1, ONT8, LGB8).
+          Hidden on RT-BB / SG-BB tables since every container in those POs
+          is BB-bound; the column was visual noise that just repeated the
+          obvious. Round 26. */}
+      {!hideDest && (
+        <td style={{ ...tdS, minWidth: 80 }}>
+          {cLocked ? (
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#F1EFE8', color: '#444441' }}>
+              {safeStr(container.dest) || '—'}
+            </span>
+          ) : (
+            <input
+              type="text"
+              defaultValue={container.dest || ''}
+              placeholder="e.g. FTW1"
+              maxLength={8}
+              onBlur={e => onUpdate({ dest: e.target.value.trim().toUpperCase() || null })}
+              style={{ fontSize: 10, padding: '3px 5px', border: '1px solid #ddd', borderRadius: 4, width: '100%', fontFamily: 'monospace', textTransform: 'uppercase', textAlign: 'center' }}
+            />
+          )}
+        </td>
+      )}
 
       {/* FCL / LCL + boxes */}
       <td style={{ ...tdS, minWidth: 130 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <select
-            style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
-            value={container.ship_mode || ''}
-            onChange={e => onUpdate({ ship_mode: e.target.value || null })}
-          >
-            <option value=''>--</option>
-            <option value='FCL'>FCL</option>
-            <option value='LCL'>LCL</option>
-          </select>
-          {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
-          {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-            <input
-              type="number"
-              placeholder="#"
-              defaultValue={container.box_count || ''}
-              onBlur={e => {
-                const v = e.target.value ? parseInt(e.target.value) : null
-                onUpdate({ box_count: !isNaN(v) ? v : null })
-              }}
-              style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
-            />
-            <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+        {cLocked ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+            {container.ship_mode
+              ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                  background: container.ship_mode === 'FCL' ? '#E6F1FB' : '#EEEDFE',
+                  color: container.ship_mode === 'FCL' ? '#0C447C' : '#3C3489' }}>
+                  {container.ship_mode}
+                </span>
+              : <span style={{ color: '#bbb', fontSize: 10 }}>—</span>}
+            {container.ship_mode === 'LCL' && container.box_count != null && (
+              <span style={{ fontSize: 10, color: '#555' }}>{container.box_count} box{container.box_count === 1 ? '' : 'es'}</span>
+            )}
           </div>
-        </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <select
+              style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
+              value={container.ship_mode || ''}
+              onChange={e => onUpdate({ ship_mode: e.target.value || null })}
+            >
+              <option value=''>--</option>
+              <option value='FCL'>FCL</option>
+              <option value='LCL'>LCL</option>
+            </select>
+            {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+            {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <input
+                type="number"
+                placeholder="#"
+                defaultValue={container.box_count || ''}
+                onBlur={e => {
+                  const v = e.target.value ? parseInt(e.target.value) : null
+                  onUpdate({ box_count: !isNaN(v) ? v : null })
+                }}
+                style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
+              />
+              <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+            </div>
+          </div>
+        )}
       </td>
 
-      {/* Notes (per container) */}
+      {/* Notes (per container) — locked when the container has a tracking
+          number and the parent PO isn't in Draft. Read-only display reuses
+          PONotesCell with `readOnly`. */}
       <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '6px 8px' }}>
-        <PONotesCell po={notesShim} upsertPO={notesUpsert} />
+        <PONotesCell po={notesShim} upsertPO={notesUpsert} readOnly={cLocked} />
       </td>
 
       {/* Docs — shared with the parent PO's doc bucket. Any container can
@@ -243,15 +293,19 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete }) {
         <PODocsCell poId={parentPo.id} />
       </td>
 
-      {/* Est. Receive Date */}
+      {/* Est. Receive Date — locked when tracking is set and parent isn't
+          Draft. Tracking-driven eta updates still flow in (they bypass this
+          input via direct onUpdate). */}
       <td style={{ ...tdS, fontWeight: 700, minWidth: 120, background: cColor.bg, color: cColor.fc, border: `1px solid ${cColor.border}` }}>
-        <input
-          type="date"
-          key={container.eta || 'none'}
-          defaultValue={container.eta || ''}
-          onBlur={e => onUpdate({ eta: e.target.value || null })}
-          style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4, width: '100%', background: '#fff', color: '#333' }}
-        />
+        {!cLocked && (
+          <input
+            type="date"
+            key={container.eta || 'none'}
+            defaultValue={container.eta || ''}
+            onBlur={e => onUpdate({ eta: e.target.value || null })}
+            style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4, width: '100%', background: '#fff', color: '#333' }}
+          />
+        )}
         <div style={{ fontSize: 11, marginTop: 3, fontWeight: 600 }}>{cEtaText}</div>
         {cSub && <div style={{ fontSize: 9, fontWeight: 400 }}>{cSub}</div>}
       </td>
@@ -619,9 +673,12 @@ export function AWDPORow({
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <thead>
                     <tr>
-                      {['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest','FCL/LCL','Notes','Docs','Est. Receive Date',''].map(h => (
-                        <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
-                      ))}
+                      {(() => {
+                        const hs = ['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest','FCL/LCL','Notes','Docs','Est. Receive Date','']
+                        return (hideDest ? hs.filter(h => h !== 'Dest') : hs).map(h => (
+                          <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
+                        ))
+                      })()}
                     </tr>
                   </thead>
                   <tbody>
@@ -630,6 +687,7 @@ export function AWDPORow({
                         key={c.id}
                         container={c}
                         parentPo={po}
+                        hideDest={hideDest}
                         onUpdate={(updates) => updateContainer(c.id, updates)}
                         onDelete={() => deleteContainer(c.id)}
                       />

@@ -485,6 +485,14 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                   // container individually instead.
                   const dStyle = isDelivered ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' } : effectiveAc
 
+                  // Round 26 — when there are no containers (single-container
+                  // case), lock the inline Receiving fields once a tracking
+                  // number is set AND the PO is no longer Draft. This matches
+                  // the read-only chip behaviour the team already sees on
+                  // containers. Escape hatch: switch the PO back to Draft on
+                  // the RT/SG tab to edit again.
+                  const inlineLocked = !hasAnyContainers && !!p.tracking_number && (p.status || 'Draft') !== 'Draft'
+
                   return (
                     <React.Fragment key={p.id}>
                       {/* Delivered banner row */}
@@ -598,7 +606,12 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   )
                                 })}
                               </div>
-                            : <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n }) }} />
+                            : inlineLocked
+                              ? <div style={{ textAlign: 'center' }}>
+                                  <span style={{ fontFamily: 'monospace', color: '#444', fontSize: 11 }}>{safeStr(p.tracking_number)}</span>
+                                  <div style={{ fontSize: 9, color: '#888', fontStyle: 'italic', marginTop: 2 }}>locked · set PO to Draft to edit</div>
+                                </div>
+                              : <TrackingInput po={p} onSubmit={handleAddTracking} onRemove={() => { update(p, 'tracking_number', null); setTrackingInfo(prev => { const n = {...prev}; delete n[p.id]; return n }) }} />
                           }
                         </td>
                         {/* Last Update — per-container, centered, no
@@ -691,7 +704,20 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   </div>
                                 ))}
                               </div>
-                            : <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                            : inlineLocked
+                              ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                  {p.ship_mode
+                                    ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                                        background: p.ship_mode === 'FCL' ? '#E6F1FB' : '#EEEDFE',
+                                        color: p.ship_mode === 'FCL' ? '#0C447C' : '#3C3489' }}>
+                                        {p.ship_mode}
+                                      </span>
+                                    : <span style={{ color: '#ccc', fontSize: 10 }}>—</span>}
+                                  {p.ship_mode === 'LCL' && p.box_count != null && (
+                                    <span style={{ fontSize: 9, color: '#555', whiteSpace: 'nowrap' }}>{p.box_count} box{p.box_count === 1 ? '' : 'es'}</span>
+                                  )}
+                                </div>
+                              : <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
                                 <select style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }} value={p.ship_mode || ''} onChange={e => update(p, 'ship_mode', e.target.value)}>
                                   <option value=''>--</option><option value='FCL'>FCL</option><option value='LCL'>LCL</option>
                                 </select>
@@ -718,7 +744,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                   </div>
                                 ))}
                               </div>
-                            : <PONotesCell po={p} upsertPO={upsertPO} />}
+                            : <PONotesCell po={p} upsertPO={upsertPO} readOnly={inlineLocked} />}
                         </td>
                         {/* Docs (per-container when containers exist) */}
                         <td style={{ ...tdS, minWidth: 200, verticalAlign: 'middle', padding: '4px 4px' }}>

@@ -9,7 +9,7 @@ import NotesPanel from './NotesPanel'
 // so both BB and AWD add-rows offer the same dropdown.
 const RT_SUPPLIERS = ['Dongyang Shanye Fishing','I-Lure','Sourcepro','WEIGHT CO','JXL','Weihai Huayue Sports','XINGTAI XIOU IMPORT']
 
-export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {} }) {
+export default function RTTab({ pos, calState, rtConfig, months, upsertPO, deletePO, upsertCalState, showModal, closeModal, searchQuery = '', setSearchQuery = () => {}, calNotes = {}, upsertCalNote = async () => {}, deleteCalNote = async () => {} }) {
   const suppliers = rtConfig.map(c => ({
     name: c.name,
     last: c.last_order_date,
@@ -28,7 +28,8 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
       <Legend items={suppliers.map(s => ({ c: (SUPP_COLORS[s.name] || {}).b || '#999', l: s.name }))} />
       <OrderCalendar suppliers={suppliers} styleMap={SUPP_COLORS} calState={calState} months={months}
         upsertCalState={upsertCalState} isSG={false} pos={pos}
-        upsertPO={upsertPO} showModal={showModal} closeModal={closeModal} />
+        upsertPO={upsertPO} showModal={showModal} closeModal={closeModal}
+        calNotes={calNotes} upsertCalNote={upsertCalNote} deleteCalNote={deleteCalNote} />
 
       {/* Free-form notes panel below the calendar — Tony uses this to jot
           context like "in 2 months we want to place a BUNCH of lead jigs".
