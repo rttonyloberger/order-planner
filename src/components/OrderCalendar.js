@@ -1,35 +1,37 @@
 import React, { useState, useEffect } from 'react'
 import { projectedOrders, shortMonth, TODAY, SUPP_DESTS, SG_PRODUCTS, fmtDate } from '../constants'
 
-// Round 26 — per-cell calendar notes, now backed by Supabase.
+// Round 23 (revised round 24) — per-cell calendar notes.
 //
-// Earlier rounds stored notes in localStorage which meant they only existed
-// on the device that wrote them, and were lost whenever the bundle was
-// rebuilt or the user logged in from another machine. That was the root of
-// "the note I added gets deleted every time you make some changes" — it
-// wasn't actually being deleted, just never visible to anyone but the
-// authoring browser.
+// Storage: localStorage. The Supabase calendar_state table only has the
+// columns the checkbox/deleted slots use, so writing a `note` column to it
+// would silently fail (Supabase rejects unknown columns and the upsert
+// error went to console only — that's why notes were "going into the abyss"
+// on the first attempt). localStorage is per-device but unblocks the
+// feature without requiring a SQL migration. If Tony later wants
+// cross-device sync, run:
+//   ALTER TABLE calendar_state ADD COLUMN note TEXT;
+// and we can swap the localStorage calls for upsertCalState.
 //
-// Storage now: a calendar_notes table (see SQL_MIGRATION_round26.sql). The
-// store hook (useStore) loads + subscribes + exposes upsert/delete helpers
-// passed in here as props. Notes show up everywhere, instantly, for every
-// authenticated user, and survive deploys.
-//
-// Key format: "<entity>|<rowName>|<isoDate>" where entity is 'rt' or 'sg',
-// rowName is the supplier name (RT) or product name (SG), and isoDate is the
-// 'YYYY-MM-DD' string of the cell.
-const calNoteKey = (entity, rowName, isoDate) => `${entity}|${rowName}|${isoDate}`
+// Per entity (rt | sg) we store ONE JSON object under op.cnotes.<entity>:
+//   { "<rowName>|<isoDate>": "<note text>", ... }
+// rowName = supplier name on RT, product name on SG.
+const cnotesStorageKey = (entityKey) => `op.cnotes.${entityKey}`
+const cnoteInnerKey = (rowName, isoDate) => `${rowName}|${isoDate}`
+function parseCnoteInner(k) {
+  // rowName itself can contain a pipe in theory — split off the date from
+  // the end and treat everything before it as rowName.
+  const parts = k.split('|')
+  if (parts.length < 2) return null
+  const isoDate = parts[parts.length - 1]
+  const rowName = parts.slice(0, -1).join('|')
+  return { rowName, isoDate }
+}
 
 export default function OrderCalendar({
   suppliers, styleMap, calState, months, upsertCalState, isSG, pos,
   // new props — required for the "create PO" popup that opens when a slot is checked off.
   upsertPO, showModal, closeModal,
-  // round 26 — calendar notes are now passed in from the store so they
-  // round-trip through Supabase. calNotes is the full keyed map; the
-  // upsert/delete helpers do the writes. Falls back to empty map and
-  // no-ops if the parent didn't wire them up yet (defensive — shouldn't
-  // happen in production).
-  calNotes = {}, upsertCalNote = async () => {}, deleteCalNote = async () => {},
 }) {
   const today = TODAY
   const entityKey = isSG ? 'sg' : 'rt'
@@ -37,13 +39,33 @@ export default function OrderCalendar({
   // List of selectable rows for the note modal — products on SG, suppliers on RT.
   const noteRowOptions = suppliers.map(s => s.name)
 
-  // Build the array of live notes for THIS entity's calendar (rt vs sg).
-  // calNotes from the store contains every entity's notes; we filter to ours
-  // by entity prefix on the key. Each entry exposes rowName + isoDate +
-  // text in the shape the cell renderer expects.
-  const allNotes = Object.values(calNotes)
-    .filter(n => n && n.entity === entityKey)
-    .map(n => ({ rowName: n.row_name, isoDate: n.iso_date, text: n.note_text }))
+  // Live note state, hydrated from localStorage on mount.
+  const [notesMap, setNotesMap] = useState({})
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(cnotesStorageKey(entityKey))
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') setNotesMap(parsed)
+      }
+    } catch {}
+  }, [entityKey])
+
+  // Persist the map back to localStorage every time it changes. setNotesMap
+  // is the single source of truth — readers below use notesMap directly.
+  const writeNotesMap = (next) => {
+    setNotesMap(next)
+    try { window.localStorage.setItem(cnotesStorageKey(entityKey), JSON.stringify(next)) } catch {}
+  }
+
+  // Build the array of live notes for the cells to filter by month/row.
+  const allNotes = Object.entries(notesMap)
+    .map(([innerKey, text]) => {
+      const parsed = parseCnoteInner(innerKey)
+      if (!parsed) return null
+      return { ...parsed, text }
+    })
+    .filter(Boolean)
 
   // Open the note modal. preset can include {rowName, isoDate, text} when
   // editing an existing note so the form starts pre-filled. Editing mode
@@ -61,22 +83,14 @@ export default function OrderCalendar({
         ? 'Update the note attached to this calendar cell, or use Delete to remove it.'
         : 'Pick a supplier and a date — your note will pin to that cell on the calendar.',
       confirmLabel: editing ? 'Save changes' : 'Add note',
-      onConfirm: async () => {
+      onConfirm: () => {
         if (!formState.rowName || !formState.isoDate) return
-        const key = calNoteKey(entityKey, formState.rowName, formState.isoDate)
+        const innerKey = cnoteInnerKey(formState.rowName, formState.isoDate)
         const trimmed = (formState.text || '').trim()
-        if (!trimmed) {
-          // Empty text → treat as delete (matches the previous "clear and
-          // save to delete" affordance from the form helper text).
-          await deleteCalNote(key)
-        } else {
-          await upsertCalNote(key, {
-            entity: entityKey,
-            row_name: formState.rowName,
-            iso_date: formState.isoDate,
-            note_text: trimmed,
-          })
-        }
+        const next = { ...notesMap }
+        if (!trimmed) delete next[innerKey]
+        else next[innerKey] = trimmed
+        writeNotesMap(next)
         closeModal()
       },
       children: (
@@ -93,9 +107,11 @@ export default function OrderCalendar({
       // Round 25 — explicit delete button when editing. Targets the original
       // preset key so renaming the row/date in the form (which is locked in
       // edit mode anyway) can't desync the delete from the note shown.
-      modalOpts.onDelete = async () => {
-        const key = calNoteKey(entityKey, preset.rowName, preset.isoDate)
-        await deleteCalNote(key)
+      modalOpts.onDelete = () => {
+        const innerKey = cnoteInnerKey(preset.rowName, preset.isoDate)
+        const next = { ...notesMap }
+        delete next[innerKey]
+        writeNotesMap(next)
         closeModal()
       }
       modalOpts.deleteLabel = 'Delete note'
@@ -356,16 +372,24 @@ export default function OrderCalendar({
                         return (
                           <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 3, justifyContent: 'center' }}>
                             {cellNotes.map(({ rowName, isoDate, text }) => (
-                              <NoteBadge
+                              <button
                                 key={isoDate}
-                                rowName={rowName}
-                                isoDate={isoDate}
-                                text={text}
+                                title={`${fmtDate(isoDate)} — ${text}`}
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   openNoteModal({ rowName, isoDate, text, editing: true })
                                 }}
-                              />
+                                style={{
+                                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                  width: 22, height: 22, borderRadius: 11,
+                                  background: '#E6F1FB', border: '1px solid #378ADD',
+                                  color: '#0C447C', fontSize: 11, lineHeight: 1,
+                                  cursor: 'pointer', padding: 0,
+                                }}
+                                aria-label={`Note for ${fmtDate(isoDate)}: ${text}`}
+                              >
+                                📝
+                              </button>
                             ))}
                           </div>
                         )
@@ -380,66 +404,6 @@ export default function OrderCalendar({
       </table>
     </div>
     </div>
-  )
-}
-
-// Round 26 — hover-popup badge for calendar notes. Replaces the native
-// `title` tooltip (which was small, slow to appear, and styled by the OS)
-// with a custom React tooltip that renders a sticky-note-style bubble next
-// to the badge while the cursor is over it. Click still routes to the
-// edit/delete modal via the `onClick` prop.
-function NoteBadge({ rowName, isoDate, text, onClick }) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <span
-      style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <button
-        onClick={onClick}
-        aria-label={`Edit note for ${rowName} on ${isoDate}`}
-        style={{
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          width: 22, height: 22, borderRadius: '50%',
-          background: '#E6F1FB', border: '1.5px solid #378ADD',
-          color: '#0C447C', fontSize: 12, cursor: 'pointer', padding: 0,
-        }}
-      >
-        📝
-      </button>
-      {hovered && text && (
-        <div
-          role="tooltip"
-          style={{
-            position: 'absolute',
-            bottom: 'calc(100% + 6px)',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 50,
-            minWidth: 180,
-            maxWidth: 260,
-            padding: '8px 10px',
-            background: '#FFF8DC',
-            border: '1.5px solid #BA7517',
-            borderRadius: 6,
-            boxShadow: '0 4px 14px rgba(0,0,0,0.15)',
-            fontSize: 11,
-            fontWeight: 500,
-            color: '#3a2a08',
-            textAlign: 'left',
-            lineHeight: 1.4,
-            whiteSpace: 'normal',
-            pointerEvents: 'none',
-          }}
-        >
-          <div style={{ fontWeight: 700, fontSize: 10, color: '#633806', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>
-            {fmtDate(isoDate)}
-          </div>
-          <div>{text}</div>
-        </div>
-      )}
-    </span>
   )
 }
 
