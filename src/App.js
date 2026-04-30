@@ -174,12 +174,14 @@ function MainApp({ session }) {
       )}
       {activeTab === 'RT' && (
           <RTTab pos={store.pos} calState={store.calState} rtConfig={store.rtConfig}
+            calNotes={store.calNotes} upsertCalNote={store.upsertCalNote} deleteCalNote={store.deleteCalNote}
             months={months} upsertPO={store.upsertPO} deletePO={store.deletePO}
             upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal}
             searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
         )}
         {activeTab === 'SG' && (
           <SGTab pos={store.pos} calState={store.calState} sgConfig={store.sgConfig}
+            calNotes={store.calNotes} upsertCalNote={store.upsertCalNote} deleteCalNote={store.deleteCalNote}
             months={months} upsertPO={store.upsertPO} deletePO={store.deletePO}
             upsertCalState={store.upsertCalState} showModal={showModal} closeModal={closeModal}
             searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
