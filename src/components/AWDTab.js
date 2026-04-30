@@ -69,7 +69,7 @@ export function receiveDateDisplay(etaIso) {
 //
 // onUpdate takes just { ...updates }; the caller wraps in c.id to match
 // BBContainerSubRow's signature.
-function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest = false }) {
+function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest = false, isBB = false }) {
   const [val, setVal] = useState(container.tracking_number || '')
   const [trackingInfo, setTrackingInfo] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -234,35 +234,66 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
         </td>
       )}
 
-      {/* FCL / LCL + boxes */}
-      <td style={{ ...tdS, minWidth: 130 }}>
-        {cLocked ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-            {container.ship_mode
-              ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
-                  background: container.ship_mode === 'FCL' ? '#E6F1FB' : '#EEEDFE',
-                  color: container.ship_mode === 'FCL' ? '#0C447C' : '#3C3489' }}>
-                  {container.ship_mode}
-                </span>
-              : <span style={{ color: '#bbb', fontSize: 10 }}>—</span>}
-            {container.ship_mode === 'LCL' && container.box_count != null && (
-              <span style={{ fontSize: 10, color: '#555' }}>{container.box_count} box{container.box_count === 1 ? '' : 'es'}</span>
-            )}
-          </div>
+      {/* FCL / LCL + boxes (BB) — or Boxes-only (AWD/FBA, round 27).
+          Tony asked to drop the FCL/LCL distinction on AWD/FBA shipments
+          since the warehouse only cares about the box count for inbound
+          AWD/FBA. BB shipments still split FCL vs LCL because the dock
+          handles them differently. */}
+      <td style={{ ...tdS, minWidth: isBB ? 130 : 90 }}>
+        {isBB ? (
+          cLocked ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {container.ship_mode
+                ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                    background: container.ship_mode === 'FCL' ? '#E6F1FB' : '#EEEDFE',
+                    color: container.ship_mode === 'FCL' ? '#0C447C' : '#3C3489' }}>
+                    {container.ship_mode}
+                  </span>
+                : <span style={{ color: '#bbb', fontSize: 10 }}>—</span>}
+              {container.ship_mode === 'LCL' && container.box_count != null && (
+                <span style={{ fontSize: 10, color: '#555' }}>{container.box_count} box{container.box_count === 1 ? '' : 'es'}</span>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <select
+                style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
+                value={container.ship_mode || ''}
+                onChange={e => onUpdate({ ship_mode: e.target.value || null })}
+              >
+                <option value=''>--</option>
+                <option value='FCL'>FCL</option>
+                <option value='LCL'>LCL</option>
+              </select>
+              {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
+              {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <input
+                  type="number"
+                  placeholder="#"
+                  defaultValue={container.box_count || ''}
+                  onBlur={e => {
+                    const v = e.target.value ? parseInt(e.target.value) : null
+                    onUpdate({ box_count: !isNaN(v) ? v : null })
+                  }}
+                  style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
+                />
+                <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
+              </div>
+            </div>
+          )
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <select
-              style={{ fontSize: 10, padding: '2px 4px', border: '1px solid #ddd', borderRadius: 4 }}
-              value={container.ship_mode || ''}
-              onChange={e => onUpdate({ ship_mode: e.target.value || null })}
-            >
-              <option value=''>--</option>
-              <option value='FCL'>FCL</option>
-              <option value='LCL'>LCL</option>
-            </select>
-            {container.ship_mode === 'FCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#E6F1FB', color: '#0C447C' }}>FCL</span>}
-            {container.ship_mode === 'LCL' && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#EEEDFE', color: '#3C3489' }}>LCL</span>}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          // AWD/FBA — just a Boxes count, no FCL/LCL split.
+          cLocked ? (
+            <div style={{ textAlign: 'center' }}>
+              {container.box_count != null
+                ? <span style={{ fontSize: 11, fontWeight: 600, color: '#0C447C' }}>
+                    {container.box_count} box{container.box_count === 1 ? '' : 'es'}
+                  </span>
+                : <span style={{ color: '#bbb', fontSize: 10 }}>—</span>}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
               <input
                 type="number"
                 placeholder="#"
@@ -271,11 +302,11 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
                   const v = e.target.value ? parseInt(e.target.value) : null
                   onUpdate({ box_count: !isNaN(v) ? v : null })
                 }}
-                style={{ fontSize: 10, padding: '2px 5px', border: '1px solid #ddd', borderRadius: 4, width: 46 }}
+                style={{ fontSize: 11, padding: '3px 6px', border: '1px solid #ddd', borderRadius: 4, width: 56, textAlign: 'center' }}
               />
               <span style={{ fontSize: 10, color: '#555', whiteSpace: 'nowrap' }}>boxes</span>
             </div>
-          </div>
+          )
         )}
       </td>
 
@@ -356,6 +387,10 @@ export function AWDPORow({
   po, upsertPO, deletePO, destOptions = ['AWD', 'FBA', 'RT AWD'], showModal, closeModal,
   allowContainerExpand = true, readOnlyStatus = false,
   hideDest = false,
+  // isBB — true when this row is on a BB-only table (sg-bb / rt-bb). Drives
+  // the FCL/LCL vs Boxes-only display in the container expansion. AWD/FBA
+  // shipments don't care about FCL/LCL split, only how many boxes are coming.
+  isBB = false,
   requireMultipleToExpand = false,
   preloadedContainers,
   // forceExpanded — when true, render the row as if the user clicked to
@@ -674,7 +709,12 @@ export function AWDPORow({
                   <thead>
                     <tr>
                       {(() => {
-                        const hs = ['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest','FCL/LCL','Notes','Docs','Est. Receive Date','']
+                        // Round 27 — header is "FCL/LCL" on BB tables (where
+                        // dock cares about full vs less-than-full container)
+                        // and "Boxes" on AWD/FBA tables (where only the
+                        // box count matters for inbound counting).
+                        const shipHeader = isBB ? 'FCL/LCL' : 'Boxes'
+                        const hs = ['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest', shipHeader,'Notes','Docs','Est. Receive Date','']
                         return (hideDest ? hs.filter(h => h !== 'Dest') : hs).map(h => (
                           <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
                         ))
@@ -688,6 +728,7 @@ export function AWDPORow({
                         container={c}
                         parentPo={po}
                         hideDest={hideDest}
+                        isBB={isBB}
                         onUpdate={(updates) => updateContainer(c.id, updates)}
                         onDelete={() => deleteContainer(c.id)}
                       />
@@ -840,12 +881,18 @@ export function AWDPOTable({
             // container surfaced the result without an extra click.
             const containerMatch = !!normalizeQuery(searchQuery) &&
               searchMatchesAnyContainer(containerMap[p.id], searchQuery)
+            // Round 27 — BB-only tables (sg-bb / rt-bb) split FCL/LCL on
+            // their containers; AWD/FBA tables collapse the column to a
+            // simple Boxes count. Detect by checking that BB is the only
+            // dest option so the same AWDPOTable handles both modes.
+            const isBB = destOptions.length === 1 && destOptions[0] === 'BB'
             return (
               <AWDPORow key={p.id} po={p} upsertPO={upsertPO} deletePO={deletePO}
                 destOptions={destOptions} showModal={showModal} closeModal={closeModal}
                 allowContainerExpand={allowContainerExpand}
                 readOnlyStatus={readOnlyStatus}
                 hideDest={hideDest}
+                isBB={isBB}
                 requireMultipleToExpand={requireMultipleToExpand}
                 preloadedContainers={containerMap[p.id]}
                 forceExpanded={containerMatch} />

@@ -36,69 +36,43 @@ function DateReceivedForm({ dateRef, poId }) {
 // awd_containers.notes. Matches the visual language of PONotesCell but
 // fits inside a 56px per-container slot. Each container has its own
 // independent notes that persist alongside its tracking/eta.
+// ContainerNotesCell — per-container free-form notes. Round 27: always-open
+// textarea (no click-to-expand) per Tony's request that "the notes tabs need
+// to be open at all times so we can edit or change notes if need be." Saves
+// on blur.
 function ContainerNotesCell({ container, onUpdate }) {
-  const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(container.notes || '')
-  const textareaRef = React.useRef(null)
 
   useEffect(() => { setVal(container.notes || '') }, [container.notes])
-  useEffect(() => {
-    if (editing && textareaRef.current) {
-      textareaRef.current.focus()
-      textareaRef.current.setSelectionRange(val.length, val.length)
-    }
-  }, [editing])
 
   const save = () => {
     const clean = (val || '').trim()
     const current = (container.notes || '').trim()
     if (clean !== current) onUpdate({ notes: clean || null })
-    setEditing(false)
-  }
-
-  if (editing) {
-    return (
-      <textarea
-        ref={textareaRef}
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onBlur={save}
-        onKeyDown={e => {
-          if (e.key === 'Escape') { setVal(container.notes || ''); setEditing(false) }
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save()
-        }}
-        placeholder="Note…"
-        style={{
-          fontSize: 10, padding: '4px 6px', border: '1px solid #0C447C', borderRadius: 5,
-          width: '100%', minHeight: 46, resize: 'vertical', fontFamily: 'inherit',
-          lineHeight: 1.3, boxSizing: 'border-box',
-        }}
-      />
-    )
   }
 
   const hasNotes = !!(container.notes && container.notes.trim())
-  const preview = hasNotes
-    ? (container.notes.length > 24 ? container.notes.slice(0, 24) + '…' : container.notes)
-    : '+ Add note'
 
   return (
-    <button
-      type="button"
-      onClick={() => setEditing(true)}
-      title={hasNotes ? container.notes : 'Click to add a note'}
-      style={{
-        fontSize: 10, textAlign: 'center', cursor: 'pointer',
-        padding: '4px 8px', borderRadius: 5,
-        background: hasNotes ? '#b7d0e2' : '#fafafa',
-        color: hasNotes ? '#0C447C' : '#888',
-        border: `1px dashed ${hasNotes ? '#6F9EBE' : '#ccc'}`,
-        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        maxWidth: 150, width: '100%', fontFamily: 'inherit',
+    <textarea
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onBlur={save}
+      onKeyDown={e => {
+        if (e.key === 'Escape') { setVal(container.notes || ''); e.currentTarget.blur() }
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.currentTarget.blur()
       }}
-    >
-      {preview}
-    </button>
+      placeholder="Note…"
+      style={{
+        fontSize: 10, padding: '4px 6px',
+        border: `1px solid ${hasNotes ? '#6F9EBE' : '#ccc'}`,
+        background: hasNotes ? '#eef4f9' : '#fff',
+        color: '#0C447C',
+        borderRadius: 5,
+        width: '100%', minHeight: 46, resize: 'vertical',
+        fontFamily: 'inherit', lineHeight: 1.3, boxSizing: 'border-box',
+      }}
+    />
   )
 }
 
