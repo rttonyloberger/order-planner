@@ -171,14 +171,28 @@ export function getDirectUrl(trackingNumber) {
   return c?.url ? c.url(trackingNumber) : null
 }
 
-async function callProxy(action, trackingNumber) {
+// Round 31 — exponential-backoff retry for 429 / transient failures.
+// Without this, a fan-out of concurrent fetches (e.g. opening a PO with
+// 5 containers) would trip 17TRACK's rate limiter and return null for
+// some containers, causing the "some show, some don't" flicker.
+async function callProxy(action, trackingNumber, attempt = 0) {
   try {
     const res = await fetch('/api/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, trackingNumber })
     })
-    if (res.status === 429) { console.warn('17TRACK rate limit'); return null }
+    if (res.status === 429) {
+      if (attempt < 3) {
+        // 600ms, 1.4s, 3s — staggered so concurrent calls don't all retry at once.
+        const base = [600, 1400, 3000][attempt]
+        const jitter = Math.floor(Math.random() * 400)
+        await new Promise(r => setTimeout(r, base + jitter))
+        return callProxy(action, trackingNumber, attempt + 1)
+      }
+      console.warn('17TRACK rate limit (gave up after retries):', trackingNumber)
+      return null
+    }
     return await res.json()
   } catch (e) {
     console.error('Proxy error:', e)
@@ -191,13 +205,65 @@ export async function registerTracking(trackingNumber) {
   return await callProxy('register', trackingNumber)
 }
 
+// Round 31 — in-memory tracking cache.
+//
+// Why: every <AWDContainerSubRow> in Amazon Receiving fetches tracking
+// on mount, and re-mounts whenever the PO expansion is closed and
+// reopened. With no cache, every reopen fired N fresh API calls, some
+// of which got rate-limited (→ null) which is exactly the "some show,
+// some don't, click again and it flips" flicker Tony was seeing.
+//
+// Fix: cache fetched info by tracking number for 5 minutes on success
+// (real container statuses change minute-to-minute at most), 45 seconds
+// on null (so a transient 429 / NotFound retries soon but doesn't
+// hammer). De-dupe in-flight fetches so a fan-out of mounts only fires
+// one network call per tracking number.
+const SUCCESS_TTL_MS = 5 * 60 * 1000   // 5 minutes
+const FAILURE_TTL_MS = 45 * 1000        // 45 seconds
+const _trackingCache = new Map()        // key → { value, expires }
+const _trackingInflight = new Map()     // key → Promise<info|null>
+
+function _cacheKey(trackingNumber) {
+  return String(trackingNumber || '').trim().toUpperCase()
+}
+
+// Force-refresh helper: drops the cached entry so the next getTracking
+// call re-fetches from 17TRACK. Use after registering a brand-new
+// number, or for an explicit refresh button.
+export function invalidateTracking(trackingNumber) {
+  const k = _cacheKey(trackingNumber)
+  if (k) _trackingCache.delete(k)
+}
+
 export async function getTracking(trackingNumber) {
   if (!trackingNumber || isDirectOnly(trackingNumber)) return null
-  const data = await callProxy('gettrackinfo', trackingNumber)
-  if (!data || data.code !== 0) return null
-  const accepted = data.data?.accepted || []
-  if (!accepted.length) return null
-  return parseAccepted(accepted)
+  const key = _cacheKey(trackingNumber)
+  const now = Date.now()
+
+  // Return cached value if still fresh.
+  const cached = _trackingCache.get(key)
+  if (cached && cached.expires > now) return cached.value
+
+  // De-dupe concurrent fetches for the same tracking number.
+  const inflight = _trackingInflight.get(key)
+  if (inflight) return inflight
+
+  const promise = (async () => {
+    const data = await callProxy('gettrackinfo', trackingNumber)
+    let info = null
+    if (data && data.code === 0) {
+      const accepted = data.data?.accepted || []
+      if (accepted.length) info = parseAccepted(accepted)
+    }
+    _trackingCache.set(key, {
+      value: info,
+      expires: now + (info ? SUCCESS_TTL_MS : FAILURE_TTL_MS),
+    })
+    _trackingInflight.delete(key)
+    return info
+  })()
+  _trackingInflight.set(key, promise)
+  return promise
 }
 
 function parseAccepted(accepted) {
