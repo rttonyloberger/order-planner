@@ -705,20 +705,13 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                                 </>}
                               </div>}
                         </td>
-                        {/* Notes (per-container when containers exist) */}
+                        {/* Round 30 — single PO-level Notes cell. Per
+                            Tony: "all we need is the main notes on the
+                            actual PO". Per-container notes were removed
+                            so the team has one place to record context
+                            for the whole PO. */}
                         <td style={{ ...tdS, minWidth: 180, verticalAlign: 'middle', padding: '4px 4px' }}>
-                          {hasAnyContainers
-                            ? <div style={slotListStyle}>
-                                {containers.map(c => (
-                                  <div key={c.id} style={slotBoxStyle}>
-                                    <ContainerNotesCell
-                                      container={c}
-                                      onUpdate={(updates) => updateContainer(p.id, c.id, updates)}
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            : <PONotesCell po={p} upsertPO={upsertPO} readOnly={inlineLocked} />}
+                          <PONotesCell po={p} upsertPO={upsertPO} readOnly={inlineLocked} />
                         </td>
                         {/* Docs (per-container when containers exist) */}
                         <td style={{ ...tdS, minWidth: 200, verticalAlign: 'middle', padding: '4px 4px' }}>
@@ -732,63 +725,54 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               </div>
                             : <PODocsCell poId={p.id} />}
                         </td>
-                        {/* Est. Receive Date — when containers exist, show
-                            each container's own ETA on its own line (with
-                            its own color + days-out). Containers on the
-                            same PO often arrive on different dates, so they
-                            each need their own box. Tracking auto-updates
-                            each container's eta in Supabase; manual entries
-                            persist until tracking provides a real date.
-                            Falls back to p.eta when there are no containers. */}
-                        <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'middle' }}>
-                          {hasAnyContainers
-                            ? <div style={slotListStyle}>
-                                {containers.map(c => {
-                                  const cInfo = containerTrackingInfo[c.id]
-                                  const cDelivered = cInfo && !cInfo.noData && cInfo.statusCode === 'Delivered'
-                                  const cDays = daysUntil(c.eta)
-                                  const cAc = arrivalColor(cDays)
-                                  const cStyle = cDelivered ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' } : cAc
-                                  const cHasTrackingEta = cInfo && !cInfo.noData && extractIsoDate(cInfo.eta)
-                                  return (
-                                    <div key={c.id} style={{ ...slotBoxStyle, background: cStyle.bg, color: cStyle.fc, border: `1px solid ${cStyle.border}`, borderRadius: 5, minWidth: 120 }}>
-                                      {cDelivered ? (
-                                        <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
-                                      ) : (
-                                        <>
-                                          <div style={{ fontSize: 11, fontWeight: 700 }}>{c.eta ? fmtTrackDate(c.eta) : 'TBD'}</div>
-                                          {cDays !== null && c.eta && (
-                                            <div style={{ fontSize: 9, fontWeight: 400 }}>
-                                              {cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`}
-                                            </div>
-                                          )}
-                                          {cHasTrackingEta && (
-                                            <div style={{ fontSize: 8, fontWeight: 400, opacity: 0.75 }}>📡 from tracking</div>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            : <div style={{ ...slotBoxStyle, background: dStyle.bg, color: dStyle.fc, border: `1px solid ${dStyle.border}`, borderRadius: 5, minWidth: 120 }}>
-                                {isDelivered ? (
+                        {/* Round 30 — single Est. Receive Date bubble per PO,
+                            regardless of container count. Per Tony: "have
+                            each PO, regardless of how many containers, show
+                            ONE est receive date." If every container has
+                            been delivered (per tracking), the bubble flips
+                            to "Delivered". Otherwise it shows the earliest
+                            pending container ETA (or PO eta as fallback),
+                            colored by arrival window. Per-container detail
+                            still lives in the expansion panel. */}
+                        {(() => {
+                          // Pending containers = those NOT yet marked delivered by tracking.
+                          const pendingC = containers.filter(c => {
+                            const ci = containerTrackingInfo[c.id]
+                            return !(ci && !ci.noData && ci.statusCode === 'Delivered')
+                          })
+                          const allDelivered = hasAnyContainers && pendingC.length === 0
+                          // Earliest pending ETA across containers; falls back to p.eta.
+                          const earliestPending = pendingC.reduce((best, c) => {
+                            if (!c.eta) return best
+                            if (!best) return c.eta
+                            return new Date(c.eta) < new Date(best) ? c.eta : best
+                          }, null)
+                          const summaryEta = hasAnyContainers ? (earliestPending || effectiveEta) : effectiveEta
+                          const summaryDays = daysUntil(summaryEta)
+                          const summaryAc = arrivalColor(summaryDays)
+                          const summaryStyle = (allDelivered || isDelivered)
+                            ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' }
+                            : summaryAc
+                          const summaryDelivered = allDelivered || isDelivered
+                          return (
+                            <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'middle' }}>
+                              <div style={{ ...slotBoxStyle, background: summaryStyle.bg, color: summaryStyle.fc, border: `1px solid ${summaryStyle.border}`, borderRadius: 5, minWidth: 120 }}>
+                                {summaryDelivered ? (
                                   <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
                                 ) : (
                                   <>
-                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{effectiveEta ? fmtTrackDate(effectiveEta) : 'TBD'}</div>
-                                    {effectiveDays !== null && effectiveEta && (
+                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{summaryEta ? fmtTrackDate(summaryEta) : 'TBD'}</div>
+                                    {summaryDays !== null && summaryEta && (
                                       <div style={{ fontSize: 9, fontWeight: 400 }}>
-                                        {effectiveDays < 0 ? `${Math.abs(effectiveDays)}d overdue` : effectiveDays === 0 ? 'Today' : `in ${effectiveDays}d`}
+                                        {summaryDays < 0 ? `${Math.abs(summaryDays)}d overdue` : summaryDays === 0 ? 'Today' : `in ${summaryDays}d`}
                                       </div>
-                                    )}
-                                    {hasInfo && extractIsoDate(info.eta) && (
-                                      <div style={{ fontSize: 8, fontWeight: 400, opacity: 0.75 }}>📡 from tracking</div>
                                     )}
                                   </>
                                 )}
-                              </div>}
-                        </td>
+                              </div>
+                            </td>
+                          )
+                        })()}
                       </tr>
 
                       {/* Per-container detail panel — rich sub-rows per container */}
@@ -810,7 +794,7 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                                 <thead>
                                   <tr>
-                                    {['Container Name','Tracking #','Carrier','Last Update','Tracking Status','FCL/LCL','Notes','Docs','Est. Receive Date',''].map(h => (
+                                    {['Container Name','Tracking #','Carrier','Last Update','Tracking Status','FCL/LCL','Docs','Est. Receive Date',''].map(h => (
                                       <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
                                     ))}
                                   </tr>
@@ -975,9 +959,11 @@ function BBContainerSubRow({ container, parentPo, trackingInfo: trackingInfoProp
   const directUrl = container.tracking_number ? getDirectUrl(container.tracking_number) : null
   const isDirect = container.tracking_number ? isDirectOnly(container.tracking_number) : false
 
-  // PONotesCell expects a { id, notes } shape; reuse it against the container.
-  const notesShim = { id: container.id, notes: container.notes }
-  const notesUpsert = (obj) => onUpdate({ notes: obj.notes ?? null })
+  // Round 30 — per-container Notes column was removed (Tony moved
+  // all note-taking to the PO-level Notes cell on the main row).
+  // notesShim/notesUpsert dropped along with it. ContainerNotesCell
+  // helper above is now unused but left in place in case we re-add
+  // per-container scratch notes later.
 
   return (
     <tr style={{ borderBottom: '1px solid #eef2f6' }}>
@@ -1066,10 +1052,8 @@ function BBContainerSubRow({ container, parentPo, trackingInfo: trackingInfoProp
         </div>
       </td>
 
-      {/* Notes (per container) */}
-      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'middle', padding: '6px 8px' }}>
-        <PONotesCell po={notesShim} upsertPO={notesUpsert} />
-      </td>
+      {/* Round 30 — per-container Notes column removed. Single PO-level
+          notes cell on the main row is the only place to record notes. */}
 
       {/* Docs — shared with the parent PO's doc bucket. Any container can
           attach/see them, reflecting that docs like packing lists typically

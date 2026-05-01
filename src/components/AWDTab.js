@@ -128,9 +128,10 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
   const directUrl = container.tracking_number ? getDirectUrl(container.tracking_number) : null
   const isDirect = container.tracking_number ? isDirectOnly(container.tracking_number) : false
 
-  // PONotesCell expects a { id, notes } shape; reuse it against the container.
-  const notesShim = { id: container.id, notes: container.notes }
-  const notesUpsert = (obj) => onUpdate({ notes: obj.notes ?? null })
+  // Round 30 — per-container notes were removed (Tony moved all
+  // note-taking to the PO-level Notes cell on the main row). Keeping
+  // the import around because it's still used by the main-row Notes
+  // column above.
 
   // Round 26 — once a tracking number is saved on a container, every other
   // field on that container locks. Tony: "when a tracking number locks, make
@@ -310,12 +311,11 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
         )}
       </td>
 
-      {/* Notes (per container) — locked when the container has a tracking
-          number and the parent PO isn't in Draft. Read-only display reuses
-          PONotesCell with `readOnly`. */}
-      <td style={{ ...tdS, minWidth: 160, verticalAlign: 'top', padding: '6px 8px' }}>
-        <PONotesCell po={notesShim} upsertPO={notesUpsert} readOnly={cLocked} />
-      </td>
+      {/* Round 30 — Notes column removed from per-container sub-row.
+          Per Tony: "remove the notes box from the container dropdown,
+          as all we need is the main notes on the actual PO". The
+          PO-level note (PONotesCell on the main row) is the single
+          place to record notes for everything in this PO. */}
 
       {/* Docs — shared with the parent PO's doc bucket. Any container can
           attach/see them, reflecting that docs like packing lists typically
@@ -674,36 +674,17 @@ export function AWDPORow({
             </div>
           </td>
         ) : (
-          /* Round 29 — match BB Receiving's per-container ETA bubbles. When
-             a PO has multiple containers we show one colored bubble per
-             container (sorted by container_num) with the date, days-until
-             subtext and an arrival-window color, instead of a single bubble
-             keyed off the earliest ETA. Falls back to the single-bubble
-             style when there are no containers. */
-          <td style={{ ...tdS, fontWeight: 700, minWidth: 130, padding: '4px 4px', verticalAlign: 'middle' }}>
-            {containers.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {[...containers].sort((a,b) => (a.container_num||0) - (b.container_num||0)).map(c => {
-                  const cDays = daysUntil(c.eta)
-                  const cAc = arrivalColor(cDays)
-                  return (
-                    <div key={c.id} style={{ background: cAc.bg, color: cAc.fc, border: `1px solid ${cAc.border}`, borderRadius: 5, padding: '4px 6px', minWidth: 110, textAlign: 'center' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700 }}>{c.eta ? fmtTrackDate(c.eta) : 'TBD'}</div>
-                      {cDays !== null && c.eta && (
-                        <div style={{ fontSize: 9, fontWeight: 400 }}>
-                          {cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div style={{ background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}`, borderRadius: 5, padding: '4px 6px', minWidth: 110, textAlign: 'center' }}>
-                <div style={{ fontSize: 11 }}>{dateText}</div>
-                {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
-              </div>
-            )}
+          /* Round 30 — single est-receive-date bubble per PO (regardless of
+             container count). Per Tony: "have each PO, regardless of how
+             many containers, show ONE est receive date." Each container
+             still has its own ETA visible in the expanded sub-rows; this
+             cell just summarizes the whole PO's next inbound date as the
+             earliest container ETA (or falls back to the PO's eta). */
+          <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
+            <div>
+              <div style={{ fontSize: 11 }}>{dateText}</div>
+              {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
+            </div>
           </td>
         )}
       </tr>
@@ -739,7 +720,7 @@ export function AWDPORow({
                         // and "Boxes" on AWD/FBA tables (where only the
                         // box count matters for inbound counting).
                         const shipHeader = isBB ? 'FCL/LCL' : 'Boxes'
-                        const hs = ['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest', shipHeader,'Notes','Docs','Est. Receive Date','']
+                        const hs = ['Container Name','Tracking #','Carrier','Last Update','Tracking Status','Dest', shipHeader,'Docs','Est. Receive Date','']
                         return (hideDest ? hs.filter(h => h !== 'Dest') : hs).map(h => (
                           <th key={h} style={{ ...thS, background: '#e8eff7', fontSize: 9 }}>{h}</th>
                         ))
