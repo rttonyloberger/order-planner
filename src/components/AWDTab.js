@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers, searchMatchesAnyContainer, normalizeQuery } from '../constants'
-import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
+import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
 import SearchBox from './SearchBox'
@@ -104,6 +104,9 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
     await onUpdate({ tracking_number: trimmed || null, carrier_slug: auto?.code || null })
     if (trimmed) {
       await registerTracking(trimmed)
+      // Drop any stale cached null from a previous unregistered fetch
+      // so the next getTracking call hits 17TRACK fresh.
+      invalidateTracking(trimmed)
       setTimeout(async () => {
         const info = await getTracking(trimmed)
         setTrackingInfo(info)

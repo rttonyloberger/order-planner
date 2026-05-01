@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers } from '../constants'
 import SearchBox from './SearchBox'
-import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl } from '../tracking'
+import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
 
@@ -256,6 +256,8 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     const auto = detectCarrier(trackingNumber)
     await upsertPO({ ...po, tracking_number: trackingNumber, carrier_slug: auto?.code || '0' })
     await registerTracking(trackingNumber)
+    // Drop any stale cached entry so loadOne pulls fresh data.
+    invalidateTracking(trackingNumber)
     // loadOne will now auto-sync p.eta once tracking returns a date.
     setTimeout(() => loadOne({ ...po, tracking_number: trackingNumber, carrier_slug: auto?.code || '0' }), 3000)
   }
