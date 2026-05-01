@@ -1,14 +1,35 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabase'
 
+// Round 29 — localStorage fallback for calendar notes. We mirror every
+// upsert / delete to localStorage so that even if the Supabase
+// calendar_notes table doesn't exist yet (i.e. the user hasn't run
+// SQL_MIGRATION_round26.sql) the notes STILL persist on this device.
+// Tony's complaint: "the note STILL wont save when i add a note. make
+// sure the note STAYS there ALL THE TIME." This guarantees that — once
+// added a note never disappears unless the user explicitly deletes it.
+const CAL_NOTES_LS_KEY = 'op.calNotes.v1'
+function loadLocalCalNotes() {
+  try {
+    const raw = localStorage.getItem(CAL_NOTES_LS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch { return {} }
+}
+function saveLocalCalNotes(map) {
+  try { localStorage.setItem(CAL_NOTES_LS_KEY, JSON.stringify(map)) } catch {}
+}
+
 export function useStore() {
   const [pos, setPOs] = useState([])
   const [calState, setCalState] = useState({})
-  // Round 26 — server-side calendar notes. Map keyed by
-  // "<entity>|<rowName>|<isoDate>". Replaces the old localStorage map so
-  // notes survive deploys and show up for every user. Requires the
-  // calendar_notes table from SQL_MIGRATION_round26.sql.
-  const [calNotes, setCalNotes] = useState({})
+  // Round 26/29 — calendar notes. Source of truth is Supabase
+  // calendar_notes (so notes show up for every user / device when the
+  // migration has been run), with a localStorage mirror as a fallback
+  // so they always persist even if the migration hasn't run yet.
+  // Map keyed by "<entity>|<rowName>|<isoDate>".
+  const [calNotes, setCalNotes] = useState(() => loadLocalCalNotes())
   const [rtConfig, setRTConfig] = useState([])
   const [sgConfig, setSGConfig] = useState([])
   const [monthStart, setMonthStart] = useState(new Date(2026, 3, 1))
@@ -35,12 +56,34 @@ export function useStore() {
         calRes.data.forEach(r => { map[r.key] = r })
         setCalState(map)
       }
+      // Round 29 — merge Supabase rows on top of any localStorage cache.
+      // Server wins per key, but local-only entries (from when the user
+      // was offline, or before the migration was run) survive the merge
+      // so notes never disappear on a reload.
       if (calNotesRes.data) {
-        const map = {}
-        calNotesRes.data.forEach(r => { map[r.key] = r })
-        setCalNotes(map)
+        setCalNotes(prev => {
+          const next = { ...prev }
+          calNotesRes.data.forEach(r => { next[r.key] = r })
+          saveLocalCalNotes(next)
+          return next
+        })
       } else if (calNotesRes.error) {
-        console.warn('calendar_notes load skipped:', calNotesRes.error.message)
+        console.warn('calendar_notes load skipped (using local cache):', calNotesRes.error.message)
+        // One-shot, friendly heads-up so Tony knows the migration hasn't
+        // been run. Notes still work locally — but they won't sync to
+        // other devices until SQL_MIGRATION_round26.sql is applied in
+        // the Supabase SQL editor.
+        if (!sessionStorage.getItem('op.calNotes.migrationWarned')) {
+          sessionStorage.setItem('op.calNotes.migrationWarned', '1')
+          queueMicrotask(() => {
+            // eslint-disable-next-line no-alert
+            alert(
+              "Heads up: calendar notes are working locally on this device only.\n\n" +
+              "To sync notes across devices, run SQL_MIGRATION_round26.sql in the Supabase SQL Editor (creates the calendar_notes table).\n\n" +
+              "Until then notes save to this browser and won't be lost — they just won't show on other computers."
+            )
+          })
+        }
       }
       if (rtRes.data) setRTConfig(rtRes.data)
       if (sgRes.data) setSGConfig(sgRes.data)
@@ -87,7 +130,9 @@ export function useStore() {
       .subscribe()
 
     // Round 26 — calendar_notes realtime fan-out. Edits made on one device
-    // appear instantly on every other open browser. Same pattern as cal-changes.
+    // appear instantly on every other open browser. Same pattern as
+    // cal-changes. Round 29 — also mirror to localStorage so the local
+    // cache stays in sync.
     const calNotesSub = supabase.channel('calnote-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_notes' }, payload => {
         const k = payload.new?.key || payload.old?.key
@@ -96,6 +141,7 @@ export function useStore() {
           const next = { ...prev }
           if (payload.eventType === 'DELETE') delete next[k]
           else next[k] = payload.new
+          saveLocalCalNotes(next)
           return next
         })
       })
@@ -189,10 +235,12 @@ export function useStore() {
     if (error) surfaceError('upsertCalState', error)
   }, [])
 
-  // Round 26 — calendar_notes upsert / delete. The optimistic local update
-  // gives the editor instant feedback; realtime fan-in then reconciles with
-  // whatever the server stored. (If two users edit the same key at the same
-  // time, last-write-wins, which matches the rest of this app.)
+  // Round 26/29 — calendar_notes upsert / delete. Writes optimistically
+  // to local state AND to the localStorage mirror, then best-effort to
+  // Supabase. The localStorage write means the note stays put forever,
+  // even if Supabase rejects the upsert (table missing, RLS, offline,
+  // etc). Realtime fan-in still reconciles from the server when it works
+  // so other devices see it.
   const upsertCalNote = useCallback(async (key, payload) => {
     const row = {
       key,
@@ -202,19 +250,27 @@ export function useStore() {
       note_text: payload.note_text,
       updated_at: new Date().toISOString(),
     }
-    setCalNotes(prev => ({ ...prev, [key]: row }))
+    setCalNotes(prev => {
+      const next = { ...prev, [key]: row }
+      saveLocalCalNotes(next)
+      return next
+    })
     const { error } = await supabase.from('calendar_notes').upsert(row)
-    if (error) surfaceError('upsertCalNote', error)
+    if (error) {
+      // Don't blow up the user — note is already saved locally. Just log.
+      console.warn('upsertCalNote (kept locally):', error.message)
+    }
   }, [])
 
   const deleteCalNote = useCallback(async (key) => {
     setCalNotes(prev => {
       const next = { ...prev }
       delete next[key]
+      saveLocalCalNotes(next)
       return next
     })
     const { error } = await supabase.from('calendar_notes').delete().eq('key', key)
-    if (error) surfaceError('deleteCalNote', error)
+    if (error) console.warn('deleteCalNote (removed locally):', error.message)
   }, [])
 
   const updateRTConfig = useCallback(async (id, changes) => {
