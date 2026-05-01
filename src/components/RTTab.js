@@ -66,20 +66,24 @@ export default function RTTab({ pos, calState, rtConfig, months, upsertPO, delet
         Click any row to expand and manage containers — each container can have its own tracking number, boxes and estimated receive date.
       </p>
       <ArrivalLegend />
-      {/* Same expandable row+containers table as SG / AWD/FBA tab, filtered to RT. */}
+      {/* Same expandable row+containers table as SG / AWD/FBA tab, filtered to RT.
+          Round 28 — destOptions match SG (AWD / FBA / GWD). The "RT" prefix
+          on the old single 'RT AWD' option was redundant since the entity
+          column already shows the company. Existing rows with dest='RT AWD'
+          are migrated to 'AWD' via SQL_MIGRATION_round28.sql. */}
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
-        tableIds={['rt-awd']} destOptions={['RT AWD']} entityFilter="RT"
+        tableIds={['rt-awd']} destOptions={['AWD', 'FBA', 'GWD']} entityFilter="RT"
         searchQuery={searchQuery} />
       <AddAWDPORow
         tableId="rt-awd"
         entity="RT"
-        defaultDest="RT AWD"
-        destOptions={['RT AWD']}
+        defaultDest="AWD"
+        destOptions={['AWD', 'FBA', 'GWD']}
         suppliers={RT_SUPPLIERS}
         productOptions={RT_PRODUCTS}
         upsertPO={upsertPO}
-        label="Add a new RT AWD PO"
+        label="Add a new RT AWD/FBA PO"
       />
     </div>
   )

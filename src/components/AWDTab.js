@@ -674,11 +674,36 @@ export function AWDPORow({
             </div>
           </td>
         ) : (
-          <td style={{ ...tdS, fontWeight: 700, minWidth: 110, background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}` }}>
-            <div>
-              <div style={{ fontSize: 11 }}>{dateText}</div>
-              {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
-            </div>
+          /* Round 29 — match BB Receiving's per-container ETA bubbles. When
+             a PO has multiple containers we show one colored bubble per
+             container (sorted by container_num) with the date, days-until
+             subtext and an arrival-window color, instead of a single bubble
+             keyed off the earliest ETA. Falls back to the single-bubble
+             style when there are no containers. */
+          <td style={{ ...tdS, fontWeight: 700, minWidth: 130, padding: '4px 4px', verticalAlign: 'middle' }}>
+            {containers.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[...containers].sort((a,b) => (a.container_num||0) - (b.container_num||0)).map(c => {
+                  const cDays = daysUntil(c.eta)
+                  const cAc = arrivalColor(cDays)
+                  return (
+                    <div key={c.id} style={{ background: cAc.bg, color: cAc.fc, border: `1px solid ${cAc.border}`, borderRadius: 5, padding: '4px 6px', minWidth: 110, textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, fontWeight: 700 }}>{c.eta ? fmtTrackDate(c.eta) : 'TBD'}</div>
+                      {cDays !== null && c.eta && (
+                        <div style={{ fontSize: 9, fontWeight: 400 }}>
+                          {cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div style={{ background: ac.bg, color: ac.fc, border: `1px solid ${ac.border}`, borderRadius: 5, padding: '4px 6px', minWidth: 110, textAlign: 'center' }}>
+                <div style={{ fontSize: 11 }}>{dateText}</div>
+                {subText && <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{subText}</div>}
+              </div>
+            )}
           </td>
         )}
       </tr>
@@ -1045,7 +1070,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
       {/* Header */}
       <div style={{ background: 'linear-gradient(135deg,#4d7aaa,#6c91b9)', borderRadius: 10, padding: '14px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>AWD / FBA Receiving</h2>
+          <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Amazon Receiving</h2>
           <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
