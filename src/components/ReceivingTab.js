@@ -221,19 +221,45 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     if (withTracking.length) setLastRefresh(new Date())
   }, [bbPosBeforeSearch.map(p => p.id).join(',')])
 
-  // Round 32 — manual refresh now retracks BOTH the PO-level and every
-  // per-container tracking number, then re-fetches everything. Tony was
-  // seeing 17TRACK return month-old "Last Update" values for containers
-  // because 17TRACK had stopped re-polling those carriers; retrack forces
-  // them to re-poll. Each container's ETA gets re-synced independently as
-  // soon as 17TRACK returns a fresh estimated_delivery_date.
-  const handleRefreshAll = useCallback(async () => {
+  // Round 33 — refresh is now a two-tier story so the auto-interval doesn't
+  // burn 17TRACK's daily retrack quota.
+  //
+  //   handleSoftRefresh — drops our local in-memory cache and re-pulls
+  //     from 17TRACK via getTracking. Cheap, can run every 10 minutes
+  //     and on every window focus. Picks up whatever data 17TRACK
+  //     currently has (which 17TRACK refreshes from carriers on its
+  //     own schedule).
+  //
+  //   handleHardRefresh — additionally calls retrackTracking on every
+  //     visible tracking number, which asks 17TRACK to re-poll the
+  //     carrier *now*. 17TRACK rate-limits that to ~once-per-day per
+  //     number, so this only runs when Tony clicks ↻ Refresh Tracking.
+  //
+  // Both refresh PO-level + per-container ETAs independently. Each
+  // container's eta column is rewritten when 17TRACK returns a real
+  // estimated_delivery_date for it.
+  const handleSoftRefresh = useCallback(async () => {
+    // Drop our cache so getTracking hits the network (within 17TRACK's own cache).
+    for (const p of bbPosBeforeSearch) {
+      if (p.tracking_number) invalidateTracking(p.tracking_number)
+    }
+    for (const c of Object.values(containerMap).flat()) {
+      if (c.tracking_number) invalidateTracking(c.tracking_number)
+    }
+    // Re-fetch PO-level.
+    for (const po of bbPosBeforeSearch.filter(p => p.tracking_number)) await loadOne(po)
+    // Force the per-container auto-loader to refire. Each container's
+    // eta gets re-written from its own tracking number's response.
+    setContainerTrackingFetched({})
+    setLastRefresh(new Date())
+  }, [bbPosBeforeSearch, loadOne, containerMap])
+
+  const handleHardRefresh = useCallback(async () => {
+    if (refreshing) return
     setRefreshing(true)
     try {
-      // Build the union of every tracking number visible on this tab —
-      // PO-level numbers + every container's number — deduped so we don't
-      // double-call retrack on a number that's shared (or is the same as
-      // its PO's).
+      // Union of every visible tracking number, deduped so a number
+      // shared across rows hits 17TRACK only once.
       const allContainers = Object.values(containerMap).flat()
       const numbers = new Set()
       for (const p of bbPosBeforeSearch) {
@@ -242,43 +268,39 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
       for (const c of allContainers) {
         if (c.tracking_number && !isDirectOnly(c.tracking_number)) numbers.add(c.tracking_number)
       }
-      // Sequential retrack so we don't trip 17TRACK's burst limiter.
       for (const num of numbers) {
         await retrackTracking(num)
       }
-      // Re-fetch PO-level tracking. retrackTracking already dropped the
-      // cache so this hits the network.
+      // Same re-pull cycle as the soft path, on already-cleared cache.
       for (const po of bbPosBeforeSearch.filter(p => p.tracking_number)) await loadOne(po)
-      // Force the per-container auto-loader to refire by clearing the
-      // "already-fetched-for" map. Each container will re-pull from
-      // 17TRACK and overwrite container.eta if a new date came back.
       setContainerTrackingFetched({})
       setLastRefresh(new Date())
     } finally {
       setRefreshing(false)
     }
-  }, [bbPosBeforeSearch, loadOne, containerMap])
+  }, [bbPosBeforeSearch, loadOne, containerMap, refreshing])
 
   // Keep "in Nd" / ETA fresh: re-fetch tracking every 10 minutes while the
-  // tab is visible and whenever the window regains focus. daysUntil(p.eta)
-  // already recalculates relative to today on every render, so pairing that
-  // with periodic eta syncs from 17TRACK prevents the stale "in 17d" problem.
+  // tab is visible and whenever the window regains focus. Round 33 — uses
+  // the soft refresh so the auto-interval doesn't burn 17TRACK's per-number
+  // daily retrack quota; the manual ↻ button is the only path that calls
+  // retrack.
   useEffect(() => {
     const id = setInterval(() => {
       if (document.visibilityState === 'visible' && bbPosBeforeSearch.some(p => p.tracking_number)) {
-        handleRefreshAll()
+        handleSoftRefresh()
       }
     }, 10 * 60 * 1000)
     return () => clearInterval(id)
-  }, [handleRefreshAll, bbPosBeforeSearch])
+  }, [handleSoftRefresh, bbPosBeforeSearch])
 
   useEffect(() => {
     const onFocus = () => {
-      if (bbPosBeforeSearch.some(p => p.tracking_number)) handleRefreshAll()
+      if (bbPosBeforeSearch.some(p => p.tracking_number)) handleSoftRefresh()
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [handleRefreshAll, bbPosBeforeSearch])
+  }, [handleSoftRefresh, bbPosBeforeSearch])
 
   const update = (po, field, val) => upsertPO({ ...po, [field]: val || null })
 
@@ -432,7 +454,9 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
               <div style={{ color: '#000', fontSize: 10, marginTop: 3 }}>{s.lbl}</div>
             </div>
           ))}
-          <button onClick={handleRefreshAll} disabled={refreshing} style={{ padding: '8px 14px', background: 'rgba(255,255,255,.35)', color: '#000', border: '1px solid rgba(0,0,0,.2)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
+          <button onClick={handleHardRefresh} disabled={refreshing}
+            title="Force 17TRACK to re-poll every carrier and pull fresh ETAs. Auto-refresh runs every 10 min in the background — only click this when you want to push 17TRACK harder."
+            style={{ padding: '8px 14px', background: 'rgba(255,255,255,.35)', color: '#000', border: '1px solid rgba(0,0,0,.2)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}>
             {refreshing ? 'Refreshing…' : '↻ Refresh Tracking'}
           </button>
         </div>
@@ -758,54 +782,91 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
                               </div>
                             : <PODocsCell poId={p.id} />}
                         </td>
-                        {/* Round 30 — single Est. Receive Date bubble per PO,
-                            regardless of container count. Per Tony: "have
-                            each PO, regardless of how many containers, show
-                            ONE est receive date." If every container has
-                            been delivered (per tracking), the bubble flips
-                            to "Delivered". Otherwise it shows the earliest
-                            pending container ETA (or PO eta as fallback),
-                            colored by arrival window. Per-container detail
-                            still lives in the expansion panel. */}
-                        {(() => {
-                          // Pending containers = those NOT yet marked delivered by tracking.
-                          const pendingC = containers.filter(c => {
-                            const ci = containerTrackingInfo[c.id]
-                            return !(ci && !ci.noData && ci.statusCode === 'Delivered')
-                          })
-                          const allDelivered = hasAnyContainers && pendingC.length === 0
-                          // Earliest pending ETA across containers; falls back to p.eta.
-                          const earliestPending = pendingC.reduce((best, c) => {
-                            if (!c.eta) return best
-                            if (!best) return c.eta
-                            return new Date(c.eta) < new Date(best) ? c.eta : best
-                          }, null)
-                          const summaryEta = hasAnyContainers ? (earliestPending || effectiveEta) : effectiveEta
-                          const summaryDays = daysUntil(summaryEta)
-                          const summaryAc = arrivalColor(summaryDays)
-                          const summaryStyle = (allDelivered || isDelivered)
-                            ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' }
-                            : summaryAc
-                          const summaryDelivered = allDelivered || isDelivered
-                          return (
-                            <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'middle' }}>
-                              <div style={{ ...slotBoxStyle, background: summaryStyle.bg, color: summaryStyle.fc, border: `1px solid ${summaryStyle.border}`, borderRadius: 5, minWidth: 120 }}>
-                                {summaryDelivered ? (
-                                  <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
-                                ) : (
-                                  <>
-                                    <div style={{ fontSize: 11, fontWeight: 700 }}>{summaryEta ? fmtTrackDate(summaryEta) : 'TBD'}</div>
-                                    {summaryDays !== null && summaryEta && (
-                                      <div style={{ fontSize: 9, fontWeight: 400 }}>
-                                        {summaryDays < 0 ? `${Math.abs(summaryDays)}d overdue` : summaryDays === 0 ? 'Today' : `in ${summaryDays}d`}
-                                      </div>
+                        {/* Round 33 — Est. Receive Date is now PER-CONTAINER on
+                            BB Receiving (Tony: "if there are two containers,
+                            make sure there are 2 estimated receive dates as
+                            they will be 2 different values"). Each container
+                            gets its own bubble in the same slotListStyle as
+                            the other per-container columns — Carrier,
+                            Tracking #, Last Update, Tracking Status, FCL/LCL,
+                            Docs — so rows still line up vertically. A
+                            container whose tracking returned "Delivered"
+                            flips to a green Delivered pill independently of
+                            its siblings. Single PO without containers still
+                            renders one bubble against p.eta. */}
+                        <td style={{ ...tdS, minWidth: 140, padding: '4px 4px', verticalAlign: 'middle' }}>
+                          {hasAnyContainers ? (
+                            <div style={slotListStyle}>
+                              {containers.map(c => {
+                                const cInfo = containerTrackingInfo[c.id]
+                                const containerDelivered = cInfo && !cInfo.noData && cInfo.statusCode === 'Delivered'
+                                const cDays = daysUntil(c.eta)
+                                const cAc = arrivalColor(cDays)
+                                const style = containerDelivered
+                                  ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' }
+                                  : cAc
+                                return (
+                                  <div key={c.id} style={{
+                                    ...slotBoxStyle,
+                                    background: style.bg,
+                                    color: style.fc,
+                                    border: `1px solid ${style.border}`,
+                                    borderRadius: 5,
+                                    minWidth: 110,
+                                  }}>
+                                    {containerDelivered ? (
+                                      <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
+                                    ) : c.eta ? (
+                                      <>
+                                        <div style={{ fontSize: 11, fontWeight: 700 }}>{fmtTrackDate(c.eta)}</div>
+                                        {cDays !== null && (
+                                          <div style={{ fontSize: 9, fontWeight: 400 }}>
+                                            {cDays < 0 ? `${Math.abs(cDays)}d overdue` : cDays === 0 ? 'Today' : `in ${cDays}d`}
+                                          </div>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <div style={{ fontSize: 11, fontWeight: 700 }}>TBD</div>
                                     )}
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          )
-                        })()}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            // Fallback: PO has no containers — single bubble against p.eta.
+                            (() => {
+                              const summaryEta = effectiveEta
+                              const summaryDays = daysUntil(summaryEta)
+                              const summaryAc = arrivalColor(summaryDays)
+                              const style = isDelivered
+                                ? { bg: '#EAF3DE', fc: '#27500A', border: '#639922' }
+                                : summaryAc
+                              return (
+                                <div style={{
+                                  ...slotBoxStyle,
+                                  background: style.bg,
+                                  color: style.fc,
+                                  border: `1px solid ${style.border}`,
+                                  borderRadius: 5,
+                                  minWidth: 120,
+                                }}>
+                                  {isDelivered ? (
+                                    <div style={{ fontSize: 11, fontWeight: 700 }}>Delivered</div>
+                                  ) : (
+                                    <>
+                                      <div style={{ fontSize: 11, fontWeight: 700 }}>{summaryEta ? fmtTrackDate(summaryEta) : 'TBD'}</div>
+                                      {summaryDays !== null && summaryEta && (
+                                        <div style={{ fontSize: 9, fontWeight: 400 }}>
+                                          {summaryDays < 0 ? `${Math.abs(summaryDays)}d overdue` : summaryDays === 0 ? 'Today' : `in ${summaryDays}d`}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )
+                            })()
+                          )}
+                        </td>
                       </tr>
 
                       {/* Per-container detail panel — rich sub-rows per container */}

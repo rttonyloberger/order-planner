@@ -1065,15 +1065,45 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
     .filter(p => p.status !== 'Complete' && p.status !== 'Draft')
 
-  // Round 32 — manual ↻ Refresh Tracking. Tony reported 5 containers
-  // 3 days overdue with last-update events from a month ago: 17TRACK had
-  // gone stale on its end. Click → for every container with a tracking
-  // number, call retrackTracking (forces 17TRACK to re-poll the carrier
-  // and drops our local cache), then bump refreshNonce so each rendered
-  // AWDContainerSubRow re-fetches and re-syncs its per-container ETA.
+  // Round 32 + 33 — manual ↻ Refresh Tracking + auto-refresh. Tony's worry:
+  // "5 containers 3 days overdue, last update is a month ago — i cant
+  // imagine those are all right." 17TRACK was sitting on stale carrier
+  // data on its side. Two refresh tiers handle this without team work:
+  //
+  //   • Auto-refresh (round 33): every 10 minutes while the tab is
+  //     visible AND on every window focus, bump refreshNonce. Each
+  //     AWDContainerSubRow drops its cache for its tracking number and
+  //     re-fetches via getTracking — which means we always show the
+  //     freshest data 17TRACK has on its end. No retrack call, so we
+  //     don't burn 17TRACK's per-number daily quota.
+  //   • Manual ↻ Refresh Tracking button: additionally calls
+  //     retrackTracking on every container's number, asking 17TRACK
+  //     to re-poll the actual carrier *now*. Use this when the auto-
+  //     refresh keeps showing the same stale "Last Update" — that
+  //     means 17TRACK itself is behind and needs a kick. Limited to
+  //     ~1x/day per number by 17TRACK, so this is intentionally a
+  //     button rather than auto-fire.
+  //
+  // ETA write-back is per container: AWDContainerSubRow's useEffect
+  // calls onUpdate({ eta }) whenever 17TRACK returns a new
+  // estimated_delivery_date, which writes the new value to that
+  // single container row. Different containers in the same PO end up
+  // with different ETAs naturally.
   const [refreshNonce, setRefreshNonce] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(null)
+
+  // Stable string of visible PO ids for effect dependencies.
+  const awdIdsKey = awdPos.map(p => p.id).join(',')
+
+  // Soft refresh — bumps the nonce so all sub-rows re-fetch from 17TRACK
+  // (cache-bypass via invalidateTracking inside the sub-row useEffect).
+  // Used by the 10-min interval and on window focus.
+  const softRefresh = useCallback(() => {
+    if (!awdIdsKey) return
+    setRefreshNonce(n => n + 1)
+    setLastRefresh(new Date())
+  }, [awdIdsKey])
 
   const handleRefreshTracking = async () => {
     if (refreshing) return
@@ -1104,6 +1134,24 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
     }
   }
 
+  // Auto-refresh interval — every 10 minutes while the tab is visible.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible' && awdIdsKey) {
+        softRefresh()
+      }
+    }, 10 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [softRefresh, awdIdsKey])
+
+  // Soft-refresh on window focus too, so flipping back from another
+  // tab pulls the latest without any team action.
+  useEffect(() => {
+    const onFocus = () => { if (awdIdsKey) softRefresh() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [softRefresh, awdIdsKey])
+
   return (
     <div>
       {/* Header */}
@@ -1111,6 +1159,11 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Amazon Receiving</h2>
           <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
+          {/* Round 33 — explicit reassurance for the team: this tab maintains
+              itself. ETAs auto-rewrite from 17TRACK on each pull. */}
+          <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0', opacity: 0.85 }}>
+            Tracking auto-refreshes every 10 min and when you switch back to this tab. Each container's ETA updates independently as soon as 17TRACK has a new date. Click ↻ to force 17TRACK to re-poll the carrier (use sparingly — limited to ~1x/day per number).
+          </p>
           {lastRefresh && <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
