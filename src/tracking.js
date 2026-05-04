@@ -205,6 +205,33 @@ export async function registerTracking(trackingNumber) {
   return await callProxy('register', trackingNumber)
 }
 
+// Round 32 — force a 17TRACK refresh for a single tracking number.
+// Used by the ↻ Refresh Tracking buttons on Amazon Receiving and BB
+// Receiving. Why this exists separately from getTracking:
+//   • 17TRACK itself caches carrier responses on their side. If the
+//     carrier hasn't pushed a new event in a few weeks, our cached
+//     'gettrackinfo' response will keep returning the same stale
+//     "Last Update" until 17TRACK re-polls the carrier.
+//   • The 'retrack' API explicitly tells 17TRACK to re-poll the
+//     carrier *now*. (Daily limit per number applies — that's a 17TRACK
+//     constraint, not ours.)
+//   • If the proxy backend doesn't recognise 'retrack' (older deploys),
+//     we fall through to 'register' which also nudges 17TRACK to update.
+// Returns the API response, or null on any failure. Always drops our
+// in-memory cache for this number so the next getTracking call hits the
+// network even if 17TRACK couldn't be re-polled.
+export async function retrackTracking(trackingNumber) {
+  if (!trackingNumber || isDirectOnly(trackingNumber)) return null
+  invalidateTracking(trackingNumber)
+  let r = null
+  try { r = await callProxy('retrack', trackingNumber) } catch (e) { r = null }
+  // If retrack isn't supported, register is the next-best nudge.
+  if (!r || (r.code != null && r.code !== 0)) {
+    try { await callProxy('register', trackingNumber) } catch (e) {}
+  }
+  return r
+}
+
 // Round 31 — in-memory tracking cache.
 //
 // Why: every <AWDContainerSubRow> in Amazon Receiving fetches tracking
