@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers } from '../constants'
 import SearchBox from './SearchBox'
-import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking } from '../tracking'
+import { CARRIERS, detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking, retrackTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
 
@@ -221,12 +221,43 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
     if (withTracking.length) setLastRefresh(new Date())
   }, [bbPosBeforeSearch.map(p => p.id).join(',')])
 
+  // Round 32 — manual refresh now retracks BOTH the PO-level and every
+  // per-container tracking number, then re-fetches everything. Tony was
+  // seeing 17TRACK return month-old "Last Update" values for containers
+  // because 17TRACK had stopped re-polling those carriers; retrack forces
+  // them to re-poll. Each container's ETA gets re-synced independently as
+  // soon as 17TRACK returns a fresh estimated_delivery_date.
   const handleRefreshAll = useCallback(async () => {
     setRefreshing(true)
-    for (const po of bbPosBeforeSearch.filter(p => p.tracking_number)) await loadOne(po)
-    setLastRefresh(new Date())
-    setRefreshing(false)
-  }, [bbPosBeforeSearch, loadOne])
+    try {
+      // Build the union of every tracking number visible on this tab —
+      // PO-level numbers + every container's number — deduped so we don't
+      // double-call retrack on a number that's shared (or is the same as
+      // its PO's).
+      const allContainers = Object.values(containerMap).flat()
+      const numbers = new Set()
+      for (const p of bbPosBeforeSearch) {
+        if (p.tracking_number && !isDirectOnly(p.tracking_number)) numbers.add(p.tracking_number)
+      }
+      for (const c of allContainers) {
+        if (c.tracking_number && !isDirectOnly(c.tracking_number)) numbers.add(c.tracking_number)
+      }
+      // Sequential retrack so we don't trip 17TRACK's burst limiter.
+      for (const num of numbers) {
+        await retrackTracking(num)
+      }
+      // Re-fetch PO-level tracking. retrackTracking already dropped the
+      // cache so this hits the network.
+      for (const po of bbPosBeforeSearch.filter(p => p.tracking_number)) await loadOne(po)
+      // Force the per-container auto-loader to refire by clearing the
+      // "already-fetched-for" map. Each container will re-pull from
+      // 17TRACK and overwrite container.eta if a new date came back.
+      setContainerTrackingFetched({})
+      setLastRefresh(new Date())
+    } finally {
+      setRefreshing(false)
+    }
+  }, [bbPosBeforeSearch, loadOne, containerMap])
 
   // Keep "in Nd" / ETA fresh: re-fetch tracking every 10 minutes while the
   // tab is visible and whenever the window regains focus. daysUntil(p.eta)

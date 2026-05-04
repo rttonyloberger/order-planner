@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { SUPP_COLORS, SG_PRODUCTS, RT_PRODUCTS, daysUntil, arrivalColor, fmtDate, fmtMoney, searchMatchesPOOrContainers, searchMatchesAnyContainer, normalizeQuery } from '../constants'
-import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking } from '../tracking'
+import { detectCarrier, registerTracking, getTracking, isDirectOnly, getDirectUrl, invalidateTracking, retrackTracking } from '../tracking'
 import PODocsCell from './PODocsCell'
 import PONotesCell from './PONotesCell'
 import SearchBox from './SearchBox'
@@ -69,7 +69,7 @@ export function receiveDateDisplay(etaIso) {
 //
 // onUpdate takes just { ...updates }; the caller wraps in c.id to match
 // BBContainerSubRow's signature.
-function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest = false, isBB = false }) {
+function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest = false, isBB = false, refreshNonce = 0 }) {
   const [val, setVal] = useState(container.tracking_number || '')
   const [trackingInfo, setTrackingInfo] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -79,12 +79,18 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
 
   useEffect(() => { setVal(container.tracking_number || '') }, [container.tracking_number])
 
-  // Fetch tracking on mount / whenever tracking number changes. Overwrites
-  // container.eta if the carrier returns an ETA (same as BB).
+  // Fetch tracking on mount / whenever tracking number changes / whenever
+  // the parent bumps refreshNonce (round 32 ↻ Refresh Tracking button).
+  // Overwrites container.eta whenever the carrier returns an ETA so each
+  // container's Est. Receive Date stays in sync with its tracking number
+  // independently of every other container in the same PO.
   useEffect(() => {
     let cancelled = false
     if (container.tracking_number && !isDirectOnly(container.tracking_number)) {
       setLoading(true)
+      // On a manual refresh (refreshNonce > 0), drop the cached value
+      // so we hit the network even within the 5-min TTL window.
+      if (refreshNonce > 0) invalidateTracking(container.tracking_number)
       getTracking(container.tracking_number).then(info => {
         if (cancelled) return
         setTrackingInfo(info)
@@ -95,7 +101,7 @@ function AWDContainerSubRow({ container, parentPo, onUpdate, onDelete, hideDest 
       }).finally(() => { if (!cancelled) setLoading(false) })
     }
     return () => { cancelled = true }
-  }, [container.tracking_number])
+  }, [container.tracking_number, refreshNonce])
 
   const handleTrackingBlur = async () => {
     const trimmed = val.trim()
@@ -402,6 +408,10 @@ export function AWDPORow({
   // is visible without the user having to click. Goes back to normal when
   // the search clears.
   forceExpanded = false,
+  // refreshNonce — incrementing counter from the parent tab's ↻ Refresh
+  // Tracking button. Forwarded to each AWDContainerSubRow so they re-fetch
+  // tracking and re-sync their per-container ETAs on demand. Round 32.
+  refreshNonce = 0,
 }) {
   const [expanded, setExpanded] = useState(false)
   const effectiveExpanded = expanded || forceExpanded
@@ -738,6 +748,7 @@ export function AWDPORow({
                         parentPo={po}
                         hideDest={hideDest}
                         isBB={isBB}
+                        refreshNonce={refreshNonce}
                         onUpdate={(updates) => updateContainer(c.id, updates)}
                         onDelete={() => deleteContainer(c.id)}
                       />
@@ -779,6 +790,10 @@ export function AWDPOTable({
   // Empty / undefined = no filtering. Container-only matches force-expand
   // the row so the user can see what matched.
   searchQuery = '',
+  // refreshNonce — incrementing on every ↻ Refresh Tracking click in the
+  // parent tab. Threaded through to each AWDPORow → AWDContainerSubRow so
+  // they bypass the in-memory cache and re-fetch from 17TRACK. Round 32.
+  refreshNonce = 0,
 }) {
   // Bulk-load every container for the POs this table renders. Lets us sort
   // by the effective receive date (earliest container eta or fallback to the
@@ -904,7 +919,8 @@ export function AWDPOTable({
                 isBB={isBB}
                 requireMultipleToExpand={requireMultipleToExpand}
                 preloadedContainers={containerMap[p.id]}
-                forceExpanded={containerMatch} />
+                forceExpanded={containerMatch}
+                refreshNonce={refreshNonce} />
             )
           })}
           {awdPos.length > 0 && (
@@ -1049,6 +1065,45 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
     .filter(p => p.table_id === 'sg-awdfba' || p.table_id === 'rt-awd')
     .filter(p => p.status !== 'Complete' && p.status !== 'Draft')
 
+  // Round 32 — manual ↻ Refresh Tracking. Tony reported 5 containers
+  // 3 days overdue with last-update events from a month ago: 17TRACK had
+  // gone stale on its end. Click → for every container with a tracking
+  // number, call retrackTracking (forces 17TRACK to re-poll the carrier
+  // and drops our local cache), then bump refreshNonce so each rendered
+  // AWDContainerSubRow re-fetches and re-syncs its per-container ETA.
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefresh, setLastRefresh] = useState(null)
+
+  const handleRefreshTracking = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      const ids = awdPos.map(p => p.id)
+      if (ids.length) {
+        const { data } = await supabase
+          .from('awd_containers')
+          .select('id, tracking_number')
+          .in('po_id', ids)
+        const numbers = Array.from(new Set(
+          (data || [])
+            .map(c => c.tracking_number)
+            .filter(n => n && !isDirectOnly(n))
+        ))
+        // Sequential to avoid hammering the rate limiter; the per-container
+        // re-fetch is parallelized inside getTracking via the in-flight
+        // de-dupe layer (round 31).
+        for (const num of numbers) {
+          await retrackTracking(num)
+        }
+      }
+      setLastRefresh(new Date())
+      setRefreshNonce(n => n + 1)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   return (
     <div>
       {/* Header */}
@@ -1056,6 +1111,7 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
         <div>
           <h2 style={{ color: '#000', fontSize: 16, fontWeight: 700, margin: 0 }}>Amazon Receiving</h2>
           <p style={{ color: '#000', fontSize: 11, margin: '2px 0 0' }}>All committed AWD and FBA inbound orders — click a row to expand and manage containers. New POs are added from the RT or SG tabs.</p>
+          {lastRefresh && <p style={{ color: '#000', fontSize: 10, margin: '4px 0 0' }}>Last refreshed: {lastRefresh.toLocaleTimeString()}</p>}
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <SearchBox value={searchQuery} onChange={setSearchQuery} />
@@ -1063,13 +1119,22 @@ export default function AWDTab({ pos, upsertPO, deletePO, showModal, closeModal,
             <div style={{ color: '#000', fontSize: 20, fontWeight: 700 }}>{awdPos.length}</div>
             <div style={{ color: '#000', fontSize: 10 }}>Open POs</div>
           </div>
+          <button
+            onClick={handleRefreshTracking}
+            disabled={refreshing}
+            title="Force 17TRACK to re-poll every container's carrier and refresh ETAs"
+            style={{ padding: '8px 14px', background: 'rgba(255,255,255,.35)', color: '#000', border: '1px solid rgba(0,0,0,.2)', borderRadius: 6, fontSize: 11, cursor: refreshing ? 'default' : 'pointer', fontWeight: 500 }}
+          >
+            {refreshing ? 'Refreshing…' : '↻ Refresh Tracking'}
+          </button>
         </div>
       </div>
 
       <AWDPOTable pos={pos} upsertPO={upsertPO} deletePO={deletePO}
         showModal={showModal} closeModal={closeModal}
         readOnlyStatus={true} hideDrafts={true}
-        searchQuery={searchQuery} />
+        searchQuery={searchQuery}
+        refreshNonce={refreshNonce} />
     </div>
   )
 }
