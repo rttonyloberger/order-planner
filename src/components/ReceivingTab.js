@@ -418,6 +418,11 @@ export default function ReceivingTab({ pos, upsertPO, deletePO, showModal, close
   // filtered subset), so the "Open POs" / "Arriving ≤30d" bubbles stay an
   // accurate operational gut check while search narrows just the table below.
   const arriving30 = bbPosBeforeSearch.filter(p => { const d = daysUntil(p.eta); return d !== null && d >= 0 && d <= 30 }).length
+  // PO value is FACE VALUE — counted once per PO regardless of how many
+  // containers the PO is split into. A $50k PO across 2 containers is
+  // $50k, not $100k. Round 34 — confirmed for Tony across the whole
+  // site. This reduce sums the PO list (one entry per PO), not the
+  // containers, so doubling can't happen here.
   const totalVal = bbPosBeforeSearch.reduce((s, p) => s + (p.po_value || 0), 0)
 
   return (

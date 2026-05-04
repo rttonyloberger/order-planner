@@ -868,6 +868,14 @@ export function AWDPOTable({
     searchMatchesPOOrContainers(p, containerMap[p.id], searchQuery)
   )
 
+  // PO value is FACE VALUE — counted once per PO. Containers do not
+  // multiply value: a $50k PO split across 2 containers is still $50k,
+  // not $100k. Per Tony (round 34): "the PO value i put in is always
+  // face value. containers does not change value just add that to the
+  // logic of the site as well across the whole site". This reduce
+  // iterates the PO list (one row = one PO), not the containers, so
+  // it's correct by construction; the comment is here so nobody
+  // refactors it into a per-container sum later.
   const totalVal = awdPos.reduce((s, p) => s + (p.po_value || 0), 0)
   const labelForFooter = showCompleted ? 'completed POs' : 'open POs'
 

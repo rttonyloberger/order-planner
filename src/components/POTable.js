@@ -45,6 +45,8 @@ export default function POTable({ tableId, pos, isSG, showShip, upsertPO, delete
       if (!b.eta) return -1
       return new Date(a.eta) - new Date(b.eta)
     })
+  // PO value is FACE VALUE — counted once per PO. Containers do not
+  // multiply value (round 34). This sums the PO list, not containers.
   const total = rows.reduce((s, p) => s + (p.po_value || 0), 0)
 
   const update = (p, field, val) => upsertPO({ ...p, [field]: val ?? null })
