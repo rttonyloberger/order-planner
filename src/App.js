@@ -115,7 +115,7 @@ function MainApp({ session }) {
           <span style={{ color: '#fff', fontWeight: 700, fontSize: 14, marginLeft: 4 }}>RT/SG Logistics and Purchasing Portal</span>
           {/* Tiny build marker so Tony can verify the new code is live after
               a deploy. Bump the version string each round. */}
-          <span style={{ color: '#8BA4CC', fontSize: 9, marginLeft: 8, opacity: 0.7, letterSpacing: '.05em' }}>v1.32</span>
+          <span style={{ color: '#8BA4CC', fontSize: 9, marginLeft: 8, opacity: 0.7, letterSpacing: '.05em' }}>v1.33</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ color: '#8BA4CC', fontSize: 11 }}>{session.user.email}</span>

@@ -219,9 +219,26 @@ export function useStore() {
       surfaceError('upsertPO', error)
       return
     }
-    // Fire-and-forget: bump the supplier's last_order_date if the new PO is newer.
-    maybeAdvanceLastOrderDate(po)
-  }, [maybeAdvanceLastOrderDate])
+    // Round 34 — the auto-advance of last_order_date that lived here was
+    // disabled. Bug it caused: when Tony clicked an AWD schedule slot for
+    // a supplier that had AWD + BB scheduled on the same day, confirming
+    // the AWD PO bumped supplier.last_order_date forward, which made
+    // projectedOrders re-compute and drop the (now past) projection
+    // date entirely — the BB slot for the same day disappeared as
+    // collateral damage.
+    //
+    // Tony's rule: "make sure that does not happen for both RT and SG and
+    // everything stays there if it needs to be unless changed or deleted
+    // by myself." So projections stay anchored to whatever
+    // last_order_date the user has set in the Control tab, and adding
+    // POs no longer touches that anchor. The user can still update
+    // last_order_date manually from Control whenever they want the
+    // projection to roll forward.
+    //
+    // Keeping maybeAdvanceLastOrderDate around (unused) so it's easy to
+    // re-enable behind a flag later if requirements change.
+    // maybeAdvanceLastOrderDate(po)
+  }, [])
 
   const deletePO = useCallback(async (id) => {
     const { error } = await supabase.from('purchase_orders').delete().eq('id', id)
